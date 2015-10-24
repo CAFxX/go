@@ -8,6 +8,8 @@ package main
 
 import (
 	"cmd/internal/goobj"
+	"sort"
+	"strings"
 )
 
 // A layoutSection describes a single section to add to the
@@ -63,6 +65,9 @@ func init() {
 // and then it assigns addresses to segments, sections, and symbols.
 func (p *Prog) layout() {
 	sections := make([]*Section, len(layout))
+
+	// Reorder symbols for better locality
+	sort.Sort(ByOptimizedOrder(p.SymOrder))
 
 	// Assign symbols to sections using index, creating sections as needed.
 	// Could keep sections separated by type during input instead.
@@ -177,4 +182,39 @@ func (p *Prog) layout() {
 		progEnd = end
 	}
 	p.defineConst("runtime.end", progEnd)
+}
+
+// ByOptimizedOrder reorders symbols for better locality
+type ByOptimizedOrder []*Sym
+
+func (a ByOptimizedOrder) Len() int      { return len(a) }
+func (a ByOptimizedOrder) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+
+func (a ByOptimizedOrder) value(i int) int {
+	SymName := a[i].Name
+	switch {
+	case strings.HasPrefix(SymName, "_"):
+		return -4
+	case strings.HasPrefix(SymName, "runtime"):
+		return -3
+	case strings.HasSuffix(SymName, ".init"):
+		// initializers go first
+		return -2
+	case strings.HasSuffix(SymName, ".main"):
+		// then main
+		return -1
+	default:
+		// then everything else
+		// TODO(cafxx): optimize ordering based on call-graph
+		// TODO(cafxx): optimize based on profiling data
+		return 0
+	}
+}
+
+func (a ByOptimizedOrder) Less(i, j int) bool {
+	iValue, jValue := a.value(i), a.value(j)
+	if iValue != jValue {
+		return iValue < jValue
+	}
+	return strings.Compare(a[i].Name, a[j].Name) < 0
 }

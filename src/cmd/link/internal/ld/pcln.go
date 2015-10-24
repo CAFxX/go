@@ -397,6 +397,7 @@ func findfunctab() {
 	max := int64(0)
 	for s := Ctxt.Textp; s != nil; s = s.Next {
 		max = s.Value + s.Size
+		//		fmt.Printf("%s > Outer %s   Sub %s   Next %s   %d+%d\n", s.Name, s.Outer, s.Sub, s.Next, s.Value, s.Size)
 	}
 
 	// for each subbucket, compute the minimum of all symbol indexes
@@ -419,6 +420,19 @@ func findfunctab() {
 		p = s.Value
 		e = s.Next
 		for container(e) != 0 {
+			//			fmt.Println(fullname(s) + " <- " + fullname(e))
+			//			fmt.Printf("%s Outer %s Sub %s Next %s %d %d\n", e.Name, e.Outer, e.Sub, e.Next, e.Value, e.Size)
+			//			E := e
+			//			for E = e; E != nil && E.Outer != nil; E = E.Outer {
+			//				fmt.Printf("Outer > %s Outer %s Sub %s Next %s %d %d\n", E.Outer.Name, E.Outer.Outer, E.Outer.Sub, E.Outer.Next, E.Outer.Value, E.Outer.Size)
+			//			}
+			//			for E = e; E != nil && E.Sub != nil; E = E.Sub {
+			//				fmt.Printf("Sub > %s Outer %s Sub %s Next %s %d %d\n", E.Sub.Name, E.Sub.Outer, E.Sub.Sub, E.Sub.Next, E.Sub.Value, E.Sub.Size)
+			//			}
+			//			if e.Next != nil {
+			//				fmt.Printf("Next > %s Outer %s Sub %s Next %s %d %d\n", e.Next.Name, e.Next.Outer, e.Next.Sub, e.Next.Next, e.Next.Value, e.Next.Size)
+			//			}
+			//			fmt.Println()
 			e = e.Next
 		}
 		if e != nil {

@@ -234,6 +234,7 @@ func Ldmain() {
 	}
 	addexport()
 	Thearch.Gentext() // trampolines, call stubs, etc.
+	reorder_scc()
 	textbuildid()
 	textaddress()
 	pclntab()

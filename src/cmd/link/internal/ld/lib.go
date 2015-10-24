@@ -45,7 +45,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
+
+	"github.com/looplab/tarjan"
 )
 
 // Data layout and relocation.
@@ -2053,4 +2056,176 @@ func Rnd(v int64, r int64) int64 {
 	}
 	v -= c
 	return v
+}
+
+func reorder() {
+	syms := make([]*LSym, 0, Ctxt.Nsymbol)
+	for sym := Ctxt.Textp; sym != nil; sym = sym.Next {
+		syms = append(syms, sym)
+	}
+	sort.Sort(ByOptimizedOrder(syms))
+	var psym *LSym
+	for _, sym := range syms {
+		sym.Next = nil
+		if psym == nil {
+			Ctxt.Textp = sym
+		} else {
+			psym.Next = sym
+		}
+		psym = sym
+	}
+	Ctxt.Etextp = psym
+}
+
+func reorder_scc() {
+	syms := make(map[interface{}][]interface{})
+	for sym := Ctxt.Textp; sym != nil; sym = sym.Next {
+		if sym.Outer == nil {
+			syms[sym] = nil
+		}
+	}
+	for sym := Ctxt.Textp; sym != nil; sym = sym.Next {
+		if sym.Outer != nil {
+			continue
+		}
+		for _, reloc := range sym.R {
+			if reloc.Sym != nil {
+				if _, ok := syms[reloc.Sym]; ok {
+					syms[sym] = append(syms[sym], reloc.Sym)
+				}
+			}
+			if reloc.Xsym != nil {
+				if _, ok := syms[reloc.Xsym]; ok {
+					syms[sym] = append(syms[sym], reloc.Xsym)
+				}
+			}
+		}
+	}
+	sccs := tarjan.Connections(syms)
+
+	var ep interface{}
+	symscc := make(map[interface{}][]interface{})
+	for _, scc := range sccs {
+		for _, sym := range scc {
+			symscc[sym] = scc
+			if sym.(*LSym).Name == "main" {
+				ep = sym
+			}
+		}
+	}
+
+	var symord []*LSym
+	var sccwalk func(interface{})
+	sccwalk = func(sym interface{}) {
+		scc, ok := symscc[sym]
+		if !ok {
+			return
+		}
+		delete(symscc, sym)
+		symord = append(symord, sym.(*LSym))
+		for _, s := range scc {
+			sccwalk(s)
+			for _, r := range syms[s] {
+				sccwalk(r)
+			}
+		}
+	}
+	if ep != nil {
+		sccwalk(ep)
+	}
+	for s := range syms {
+		sccwalk(s)
+	}
+
+	var psym *LSym
+	for _, sym := range symord {
+		if psym == nil {
+			Ctxt.Textp = sym
+		} else {
+			psym.Next = sym
+		}
+		psym = sym
+		if sym.Sub != nil {
+			sym.Next = sym.Sub
+			for psym.Sub != nil {
+				psym = psym.Sub
+			}
+		}
+	}
+	psym.Next = nil
+	Ctxt.Etextp = psym
+
+	//	for s := Ctxt.Textp; s != nil; s = s.Next {
+	//		fmt.Printf("%s > Type %d   Outer %s   Sub %s   Next %s   %d+%d\n", s.Name, s.Type, s.Outer, s.Sub, s.Next, s.Value, s.Size)
+	//	}
+
+}
+
+// ByOptimizedOrder reorders symbols for better locality
+type ByOptimizedOrder []*LSym
+
+func (a ByOptimizedOrder) Len() int      { return len(a) }
+func (a ByOptimizedOrder) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+
+func (a ByOptimizedOrder) order(i int) int {
+	SymName := a[i].Name
+	if a[i].Outer != nil {
+		SymName = a[i].Outer.Name
+	}
+	switch {
+	case strings.HasPrefix(SymName, "_rt0_"):
+		fallthrough
+	case stringsCompare(SymName, "_main") == 0:
+		fallthrough
+	case stringsCompare(SymName, "main") == 0:
+		fallthrough
+	case stringsCompare(SymName, "runtime.rt0_go") == 0:
+		// first the entry points
+		return -5
+	case strings.HasPrefix(SymName, "runtime"):
+		// then the runtime
+		return -4
+	case strings.Contains(SymName, ".init."):
+		fallthrough
+	case strings.HasSuffix(SymName, ".init"):
+		// then all initializers
+		return -3
+	case strings.HasSuffix(SymName, ".main"):
+		// then the main (go) function
+		return -2
+	case strings.HasPrefix(SymName, "main"):
+		// then the main module
+		return -1
+	default:
+		// then everything else
+		// TODO(cafxx): optimize ordering based on call-graph
+		// TODO(cafxx): optimize based on profiling data
+		return 0
+	case strings.HasPrefix(SymName, "debug") ||
+		strings.HasPrefix(SymName, "test") ||
+		strings.HasPrefix(SymName, "reflect"):
+		// at the end, things that should not be used in release builds :)
+		return 1
+	}
+}
+
+func fullname(sym *LSym) string {
+	if sym.Outer != nil {
+		idx := 1
+		for sub := sym.Outer.Sub; sub != nil; sub = sub.Sub {
+			if sub == sym {
+				return fmt.Sprintf("%s+%04x", sym.Outer.Name, idx)
+			}
+			idx++
+		}
+	}
+	return sym.Name
+}
+
+func (a ByOptimizedOrder) Less(i, j int) bool {
+	iValue, jValue := a.order(i), a.order(j)
+	if iValue != jValue {
+		return iValue < jValue
+	}
+	return stringsCompare(fullname(a[i]), fullname(a[j])) < 0
 }
