@@ -48,9 +48,7 @@ const DefaultMaxIdleConnsPerHost = 2
 // HTTPS, and HTTP proxies (for either HTTP or HTTPS with CONNECT).
 // Transport can also cache connections for future re-use.
 type Transport struct {
-	idleMu     sync.Mutex
-	wantIdle   bool // user has requested to close all idle conns
-	idleConn   map[connectMethodKey][]*persistConn
+	idleMu     sync.RWMutex
 	idleConnCh map[connectMethodKey]chan *persistConn
 
 	reqMu       sync.Mutex
@@ -358,13 +356,11 @@ func (t *Transport) RegisterProtocol(scheme string, rt RoundTripper) {
 // in use.
 func (t *Transport) CloseIdleConnections() {
 	t.idleMu.Lock()
-	m := t.idleConn
-	t.idleConn = nil
+	m := t.idleConnCh
 	t.idleConnCh = nil
-	t.wantIdle = true
 	t.idleMu.Unlock()
 	for _, conns := range m {
-		for _, pconn := range conns {
+		for pconn := range conns {
 			pconn.close()
 		}
 	}
@@ -455,108 +451,77 @@ func (cm *connectMethod) proxyAuth() string {
 // If pconn is no longer needed or not in a good state, putIdleConn
 // returns false.
 func (t *Transport) putIdleConn(pconn *persistConn) bool {
-	if t.DisableKeepAlives || t.MaxIdleConnsPerHost < 0 {
+	ch := t.getIdleConnCh(pconn.cacheKey, false)
+	if ch == nil {
 		pconn.close()
 		return false
 	}
 	if pconn.isBroken() {
 		return false
 	}
-	key := pconn.cacheKey
-	max := t.MaxIdleConnsPerHost
-	if max == 0 {
-		max = DefaultMaxIdleConnsPerHost
-	}
 	pconn.markReused()
-	t.idleMu.Lock()
-
-	waitingDialer := t.idleConnCh[key]
 	select {
-	case waitingDialer <- pconn:
-		// We're done with this pconn and somebody else is
-		// currently waiting for a conn of this type (they're
-		// actively dialing, but this conn is ready
-		// first). Chrome calls this socket late binding.  See
-		// https://insouciant.org/tech/connection-management-in-chromium/
-		t.idleMu.Unlock()
+	case ch <- pconn:
 		return true
 	default:
-		if waitingDialer != nil {
-			// They had populated this, but their dial won
-			// first, so we can clean up this map entry.
-			delete(t.idleConnCh, key)
-		}
-	}
-	if t.wantIdle {
-		t.idleMu.Unlock()
 		pconn.close()
 		return false
 	}
-	if t.idleConn == nil {
-		t.idleConn = make(map[connectMethodKey][]*persistConn)
-	}
-	if len(t.idleConn[key]) >= max {
-		t.idleMu.Unlock()
-		pconn.close()
-		return false
-	}
-	for _, exist := range t.idleConn[key] {
-		if exist == pconn {
-			log.Fatalf("dup idle pconn %p in freelist", pconn)
-		}
-	}
-	t.idleConn[key] = append(t.idleConn[key], pconn)
-	t.idleMu.Unlock()
-	return true
 }
 
 // getIdleConnCh returns a channel to receive and return idle
-// persistent connection for the given connectMethod.
-// It may return nil, if persistent connections are not being used.
-func (t *Transport) getIdleConnCh(cm connectMethod) chan *persistConn {
-	if t.DisableKeepAlives {
+// persistent connection for the given cache key.
+// It may return nil if persistent connections are not being used.
+func (t *Transport) getIdleConnCh(key connectMethodKey, onlyExisting bool) chan *persistConn {
+	if t.DisableKeepAlives || t.MaxIdleConnsPerHost < 0 {
 		return nil
 	}
-	key := cm.key()
-	t.idleMu.Lock()
-	defer t.idleMu.Unlock()
-	t.wantIdle = false
+
+	lock := false
+	t.idleMu.RLock()
+
+retry:
 	if t.idleConnCh == nil {
+		if !lock {
+			goto needLock
+		}
 		t.idleConnCh = make(map[connectMethodKey]chan *persistConn)
 	}
 	ch, ok := t.idleConnCh[key]
-	if !ok {
-		ch = make(chan *persistConn)
+	if !ok && !onlyExisting {
+		if !lock {
+			goto needLock
+		}
+		maxConns := t.MaxIdleConnsPerHost
+		if maxConns == 0 {
+			maxConns = DefaultMaxIdleConnsPerHost
+		}
+		ch = make(chan *persistConn, maxConns)
 		t.idleConnCh[key] = ch
 	}
+
+	if lock {
+		t.idleMu.Unlock()
+	} else {
+		t.idleMu.RUnlock()
+	}
 	return ch
+
+needLock:
+	lock = true
+	t.idleMu.RUnlock()
+	t.idleMu.Lock()
+	goto retry
 }
 
 func (t *Transport) getIdleConn(cm connectMethod) (pconn *persistConn) {
-	key := cm.key()
-	t.idleMu.Lock()
-	defer t.idleMu.Unlock()
-	if t.idleConn == nil {
-		return nil
-	}
-	for {
-		pconns, ok := t.idleConn[key]
-		if !ok {
-			return nil
-		}
-		if len(pconns) == 1 {
-			pconn = pconns[0]
-			delete(t.idleConn, key)
-		} else {
-			// 2 or more cached connections; pop last
-			// TODO: queue?
-			pconn = pconns[len(pconns)-1]
-			t.idleConn[key] = pconns[:len(pconns)-1]
-		}
+	ch := getIdleConnCh(cm.key(), true)
+	for pconn = range ch {
 		if !pconn.isBroken() {
 			return
 		}
 	}
+	return nil
 }
 
 func (t *Transport) setReqCanceler(r *Request, fn func()) {
@@ -640,12 +605,16 @@ func (t *Transport) getConn(req *Request, cm connectMethod) (*persistConn, error
 		dialc <- dialRes{pc, err}
 	}()
 
-	idleConnCh := t.getIdleConnCh(cm)
+	idleConnCh := t.getIdleConnCh(cm, true)
+retry:
 	select {
 	case v := <-dialc:
 		// Our dial finished.
 		return v.pc, v.err
 	case pc := <-idleConnCh:
+		if pc.isBroken() {
+			goto retry
+		}
 		// Another request finished first and its net.Conn
 		// became available before our dial. Or somebody
 		// else's dial that they didn't use.
