@@ -125,6 +125,77 @@ func (rw *RWMutex) Unlock() {
 	}
 }
 
+// LockToRLock demotes the lock to a shared read lock. It is an error to call
+// this if the RWMutex is not write locked.
+func (rw *RWMutex) LockToRLock() {
+	if race.Enabled {
+		_ = rw.w.state
+		race.Release(unsafe.Pointer(&rw.readerSem))
+		race.Release(unsafe.Pointer(&rw.writerSem))
+		race.Disable()
+	}
+
+	// Announce to readers there is no active writer and add ourselves to the
+	// active readers
+	r := atomic.AddInt32(&rw.readerCount, rwmutexMaxReaders+1) - 1
+	if r >= rwmutexMaxReaders {
+		race.Enable()
+		panic("sync: Unlock of unlocked RWMutex")
+	}
+	// Unblock blocked readers, if any.
+	for i := 0; i < int(r); i++ {
+		runtime_Semrelease(&rw.readerSem)
+	}
+	// Allow other writers to proceed.
+	rw.w.Unlock()
+	if race.Enabled {
+		race.Enable()
+		race.Acquire(unsafe.Pointer(&rw.readerSem))
+	}
+}
+
+// RLockToLock attempts to promote the lock to an exclusive write lock. It is an
+// error to call this function if the RWMutext is not read locked. In case it is
+// not possible to acquire a write lock (e.g. because another writer is already
+// waiting) returns false.
+func (rw *RWMutex) RLockToLock() bool {
+	if race.Enabled {
+		_ = rw.w.state
+		race.ReleaseMerge(unsafe.Pointer(&rw.writerSem))
+		race.Disable()
+	}
+
+	// First, make sure no other writers are waiting. If this fails, immediately
+	// return because promotion is impossible .
+	if !rw.w.tryLock() {
+		return false
+	}
+
+	// Remove us from the active readers and announce to readers there is a pending writer.
+	r := atomic.AddInt32(&rw.readerCount, -1-rwmutexMaxReaders) + rwmutexMaxReaders
+	if r < 0 {
+		if r+1 == 0 || r+1 == -rwmutexMaxReaders {
+			race.Enable()
+			panic("sync: RUnlock of unlocked RWMutex")
+		}
+		// A writer is pending.
+		race.Enable()
+		panic("sync: Unexpected pending writer")
+	}
+
+	// Wait for active readers.
+	if r != 0 && atomic.AddInt32(&rw.readerWait, r) != 0 {
+		runtime_Semacquire(&rw.writerSem)
+	}
+
+	if race.Enabled {
+		race.Enable()
+		race.Acquire(unsafe.Pointer(&rw.readerSem))
+		race.Acquire(unsafe.Pointer(&rw.writerSem))
+	}
+	return true
+}
+
 // RLocker returns a Locker interface that implements
 // the Lock and Unlock methods by calling rw.RLock and rw.RUnlock.
 func (rw *RWMutex) RLocker() Locker {

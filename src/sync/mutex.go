@@ -36,18 +36,24 @@ const (
 	mutexWaiterShift = iota
 )
 
+func (m *Mutex) tryLock() bool {
+	res := atomic.CompareAndSwapInt32(&m.state, 0, mutexLocked)
+	if res && race.Enabled {
+		race.Acquire(unsafe.Pointer(m))
+	}
+	return res
+}
+
 // Lock locks m.
 // If the lock is already in use, the calling goroutine
 // blocks until the mutex is available.
 func (m *Mutex) Lock() {
 	// Fast path: grab unlocked mutex.
-	if atomic.CompareAndSwapInt32(&m.state, 0, mutexLocked) {
-		if race.Enabled {
-			race.Acquire(unsafe.Pointer(m))
-		}
+	if m.tryLock() {
 		return
 	}
 
+	// Slow path...
 	awoke := false
 	iter := 0
 	for {
