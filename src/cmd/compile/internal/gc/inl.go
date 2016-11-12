@@ -141,6 +141,10 @@ func caninl(fn *Node) {
 
 	const maxBudget = 80
 	budget := int32(maxBudget) // allowed hairyness
+	if uses == 1 {
+		// It is always profitable to inline functions called from a single callsite.
+		budget = 1 << 20
+	}
 	if ishairylist(fn.Nbody, &budget, &reason) {
 		return
 	}
