@@ -31,8 +31,9 @@ func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 			return 0, nil, true
 		}
 	}
-	f, ok := r.(*os.File)
-	if !ok {
+	f, fok := r.(*os.File)
+	s, sok := r.(*TCPConn)
+	if !fok && !sok {
 		return 0, nil, false
 	}
 
@@ -40,6 +41,15 @@ func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 		return 0, err, true
 	}
 	defer c.writeUnlock()
+
+	if !fok && sok {
+		// if sendfile can't be used (e.g. if r is a socket) do the splice dance
+		read, written, err := splicefds(s.fd.sysfd, c.sysfd, remain)
+		if lr != nil {
+			lr.N = remain - read
+		}
+		return written, err, read > 0
+	}
 
 	dst := c.sysfd
 	src := int(f.Fd())
@@ -76,4 +86,52 @@ func sendFile(c *netFD, r io.Reader) (written int64, err error, handled bool) {
 		err = os.NewSyscallError("sendfile", err)
 	}
 	return written, err, written > 0
+}
+
+func splicefds(in, out int, limit int64) (int64, int64, err) {
+	const (
+		SPLICE_F_MOVE     = 1
+		SPLICE_F_NONBLOCK = 2
+		SPLICE_F_MORE     = 4
+		SPLICE_F_GIFT     = 8
+		maxChunk          = 1 << 16 // bytes, TODO: fcntl(F_GETPIPE_SZ)?
+	)
+
+	var pipe [2]int
+	err := syscall.Pipe(pipe)
+	if err != nil {
+		return 0, 0, os.NewSyscallError("pipe", err)
+	}
+
+	const spliceflags = SPLICE_F_MOVE | SPLICE_F_MORE
+	read, written := int64(0), int64(0)
+
+	for written < limit {
+		chunk := maxChunk - (read - written)
+		if limit-read < chunk {
+			chunk = limit - read
+		}
+
+		n, err1 := syscall.Splice(src, nil, pipe[1], nil, chunk, spliceflags)
+		if err1 != nil {
+			err = os.NewSyscallError("splice", err1)
+			break
+		}
+		read += int64(n)
+
+		m, err1 := syscall.Splice(pipe[0], nil, dst, nil, read-written, spliceflags)
+		if err1 != nil {
+			err = os.NewSyscallError("splice", err1)
+			break
+		}
+		if m == 0 {
+			break
+		}
+		written += int64(m)
+	}
+
+	syscall.Close(pipe[1])
+	syscall.Close(pipe[0])
+
+	return read, written, err
 }
