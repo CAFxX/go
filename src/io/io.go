@@ -14,6 +14,7 @@ package io
 
 import (
 	"errors"
+	"sync"
 )
 
 // Seek whence values.
@@ -383,8 +384,10 @@ func copyBuffer(dst Writer, src Reader, buf []byte) (written int64, err error) {
 	if rt, ok := dst.(ReaderFrom); ok {
 		return rt.ReadFrom(src)
 	}
+	rbuf := false
 	if buf == nil {
-		buf = make([]byte, 32*1024)
+		buf = cbp.Get().([]byte)
+		rbuf = true
 	}
 	for {
 		nr, er := src.Read(buf)
@@ -409,7 +412,18 @@ func copyBuffer(dst Writer, src Reader, buf []byte) (written int64, err error) {
 			break
 		}
 	}
+	if rbuf {
+		cbp.Put(buf)
+	}
 	return written, err
+}
+
+// pool of temporary buffers used internally by copyBuffer when no buffer is
+// provided
+var cbp = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 32*1024)
+	},
 }
 
 // LimitReader returns a Reader that reads from r
