@@ -231,20 +231,37 @@ func TestMixedReadsAndWrites(t *testing.T) {
 	empty(t, "TestMixedReadsAndWrites (2)", &buf, s, make([]byte, buf.Len()))
 }
 
-func TestCapWithPreallocatedSlice(t *testing.T) {
+func TestCapWithPreallocatedSmallSlice(t *testing.T) {
 	buf := NewBuffer(make([]byte, 10))
 	n := buf.Cap()
-	if n != 10 {
-		t.Errorf("expected 10, got %d", n)
+	if n != 64 {
+		t.Errorf("expected 64, got %d", n)
+	}
+}
+
+func TestCapWithSmallSliceAndWrittenData(t *testing.T) {
+	buf := NewBuffer(make([]byte, 0, 10))
+	buf.Write([]byte("test"))
+	n := buf.Cap()
+	if n != 64 {
+		t.Errorf("expected 64, got %d", n)
+	}
+}
+
+func TestCapWithPreallocatedSlice(t *testing.T) {
+	buf := NewBuffer(make([]byte, 100))
+	n := buf.Cap()
+	if n != 100 {
+		t.Errorf("expected 100, got %d", n)
 	}
 }
 
 func TestCapWithSliceAndWrittenData(t *testing.T) {
-	buf := NewBuffer(make([]byte, 0, 10))
+	buf := NewBuffer(make([]byte, 0, 100))
 	buf.Write([]byte("test"))
 	n := buf.Cap()
-	if n != 10 {
-		t.Errorf("expected 10, got %d", n)
+	if n != 100 {
+		t.Errorf("expected 100, got %d", n)
 	}
 }
 

@@ -420,7 +420,16 @@ func (b *Buffer) ReadString(delim byte) (line string, err error) {
 //
 // In most cases, new(Buffer) (or just declaring a Buffer variable) is
 // sufficient to initialize a Buffer.
-func NewBuffer(buf []byte) *Buffer { return &Buffer{buf: buf} }
+func NewBuffer(buf []byte) *Buffer {
+	b := &Buffer{}
+	if cap(buf) > cap(b.bootstrap) {
+		b.buf = buf
+	} else {
+		b.buf = b.bootstrap[0:len(buf)]
+		copy(b.buf[0:], buf)
+	}
+	return b
+}
 
 // NewBufferString creates and initializes a new Buffer using string s as its
 // initial contents. It is intended to prepare a buffer to read an existing
@@ -429,5 +438,12 @@ func NewBuffer(buf []byte) *Buffer { return &Buffer{buf: buf} }
 // In most cases, new(Buffer) (or just declaring a Buffer variable) is
 // sufficient to initialize a Buffer.
 func NewBufferString(s string) *Buffer {
-	return &Buffer{buf: []byte(s)}
+	b := &Buffer{}
+	if len(s) > cap(b.bootstrap) {
+		b.buf = []byte(s)
+	} else {
+		b.buf = b.bootstrap[0:len(s)]
+		copy(b.buf[0:], s)
+	}
+	return b
 }
