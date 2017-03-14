@@ -425,6 +425,8 @@ func NewBuffer(buf []byte) *Buffer {
 	if cap(buf) > cap(b.bootstrap) {
 		b.buf = buf
 	} else {
+		// if the capacity of buf is lower than that of bootstrap, copy the data
+		// instead of using buf
 		b.buf = b.bootstrap[0:len(buf)]
 		copy(b.buf[0:], buf)
 	}
@@ -442,6 +444,8 @@ func NewBufferString(s string) *Buffer {
 	if len(s) > cap(b.bootstrap) {
 		b.buf = []byte(s)
 	} else {
+		// if the length of s is lower than the capacity of bootstrap copy the data
+		// instead of using s
 		b.buf = b.bootstrap[0:len(s)]
 		copy(b.buf[0:], s)
 	}
