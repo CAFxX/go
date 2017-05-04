@@ -64,8 +64,9 @@ const (
 	bucketCntBits = 3
 	bucketCnt     = 1 << bucketCntBits
 
-	// Maximum average load of a bucket that triggers growth.
-	loadFactor = 6.5
+	// Maximum average load of a bucket that triggers growth (loadFactorNum/loadFactorDen)
+	loadFactorNum = uint64(65)
+	loadFactorDen = uint64(100)
 
 	// Maximum key or value size to keep inline (instead of mallocing per element).
 	// Must fit in a uint8.
@@ -108,7 +109,7 @@ type hmap struct {
 	// ../reflect/type.go. Don't change this structure without also changing that code!
 	count     int // # live cells == size of map.  Must be first (used by len() builtin)
 	flags     uint8
-	B         uint8  // log_2 of # of buckets (can hold up to loadFactor * 2^B items)
+	B         uint8  // log_2 of # of buckets (can hold up to loadFactorNum * 2^B / loadFactorDen items)
 	noverflow uint16 // approximate number of overflow buckets; see incrnoverflow for details
 	hash0     uint32 // hash seed
 
@@ -299,7 +300,7 @@ func makemap(t *maptype, hint int64, h *hmap, bucket unsafe.Pointer) *hmap {
 
 	// find size parameter which will hold the requested # of elements
 	B := uint8(0)
-	for ; overLoadFactor(hint, B); B++ {
+	for ; overLoadFactor(uint64(hint), B); B++ {
 	}
 
 	// allocate initial hash table
@@ -594,7 +595,7 @@ again:
 
 	// If we hit the max load factor or we have too many overflow buckets,
 	// and we're not already in the middle of growing, start growing.
-	if !h.growing() && (overLoadFactor(int64(h.count), h.B) || tooManyOverflowBuckets(h.noverflow, h.B)) {
+	if !h.growing() && (overLoadFactor(uint64(h.count), h.B) || tooManyOverflowBuckets(h.noverflow, h.B)) {
 		hashGrow(t, h)
 		goto again // Growing the table invalidates everything, so try again
 	}
@@ -943,7 +944,7 @@ func hashGrow(t *maptype, h *hmap) {
 	// Otherwise, there are too many overflow buckets,
 	// so keep the same number of buckets and "grow" laterally.
 	bigger := uint8(1)
-	if !overLoadFactor(int64(h.count), h.B) {
+	if !overLoadFactor(uint64(h.count), h.B) {
 		bigger = 0
 		h.flags |= sameSizeGrow
 	}
@@ -982,9 +983,8 @@ func hashGrow(t *maptype, h *hmap) {
 }
 
 // overLoadFactor reports whether count items placed in 1<<B buckets is over loadFactor.
-func overLoadFactor(count int64, B uint8) bool {
-	// TODO: rewrite to use integer math and comparison?
-	return count >= bucketCnt && float32(count) >= loadFactor*float32((uint64(1)<<B))
+func overLoadFactor(count uint64, B uint8) bool {
+	return count >= bucketCnt && count * loadFactorDen >= loadFactorNum << B
 }
 
 // tooManyOverflowBuckets reports whether noverflow buckets is too many for a map with 1<<B buckets.
