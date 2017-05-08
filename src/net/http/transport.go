@@ -1520,6 +1520,7 @@ func (pc *persistConn) readLoop() {
 		pc.close(closeErr)
 		pc.t.removeIdleConn(pc)
 		pc.t.putBufioReader(pc.br)
+		pc.br = nil
 	}()
 
 	tryPutIdleConn := func(trace *httptrace.ClientTrace) bool {
@@ -1781,6 +1782,7 @@ func (pc *persistConn) writeLoop() {
 	defer func() {
 		close(pc.writeLoopDone)
 		pc.t.putBufioWriter(pc.bw)
+		pc.bw = nil
 	}()
 	for {
 		select {
