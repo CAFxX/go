@@ -86,6 +86,9 @@ type Transport struct {
 	altMu    sync.Mutex   // guards changing altProto only
 	altProto atomic.Value // of nil or map[string]RoundTripper, key is URI scheme
 
+	bwPool sync.Pool // bufio.Writer pool
+	brPool sync.Pool // bufio.Reader pool
+
 	// Proxy specifies a function to return a proxy for a given
 	// Request. If the function returns a non-nil error, the
 	// request is aborted with the provided error.
@@ -1163,11 +1166,39 @@ func (t *Transport) dialConn(ctx context.Context, cm connectMethod) (*persistCon
 		}
 	}
 
-	pconn.br = bufio.NewReader(pconn)
-	pconn.bw = bufio.NewWriter(persistConnWriter{pconn})
+	pconn.br = t.getBufioReader(pconn)
+	pconn.bw = t.getBufioWriter(persistConnWriter{pconn})
 	go pconn.readLoop()
 	go pconn.writeLoop()
 	return pconn, nil
+}
+
+func (t *Transport) getBufioReader(r io.Reader) *bufio.Reader {
+	pr := t.brPool.Get()
+	if pr == nil {
+		return bufio.NewReader(r)
+	}
+	br := pr.(*bufio.Reader)
+	br.Reset(r)
+	return br
+}
+
+func (t *Transport) getBufioWriter(w io.Writer) *bufio.Writer {
+	pw := t.bwPool.Get()
+	if pw == nil {
+		return bufio.NewWriter(w)
+	}
+	bw := pw.(*bufio.Writer)
+	bw.Reset(w)
+	return bw
+}
+
+func (t *Transport) putBufioReader(br *bufio.Reader) {
+	t.brPool.Put(br)
+}
+
+func (t *Transport) putBufioWriter(bw *bufio.Writer) {
+	t.bwPool.Put(bw)
 }
 
 // persistConnWriter is the io.Writer written to by pc.bw.
@@ -1488,6 +1519,7 @@ func (pc *persistConn) readLoop() {
 	defer func() {
 		pc.close(closeErr)
 		pc.t.removeIdleConn(pc)
+		pc.t.putBufioReader(pc.br)
 	}()
 
 	tryPutIdleConn := func(trace *httptrace.ClientTrace) bool {
@@ -1746,7 +1778,10 @@ type nothingWrittenError struct {
 }
 
 func (pc *persistConn) writeLoop() {
-	defer close(pc.writeLoopDone)
+	defer func() {
+		close(pc.writeLoopDone)
+		pc.t.putBufioWriter(pc.bw)
+	}()
 	for {
 		select {
 		case wr := <-pc.writech:
