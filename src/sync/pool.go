@@ -55,18 +55,21 @@ type Pool struct {
 
 // Local per-P Pool appendix.
 type poolLocalInternal struct {
-	private interface{}   // Can be used only by the respective P.
-	shared  []interface{} // Can be used by any P.
-	Mutex                 // Protects shared.
+	Mutex                    // Protects shared.
+	shared     []interface{} // Can be used by any P.
+	privateLen int           // How many objects currently in the private pool.
 }
 
 type poolLocal struct {
 	poolLocalInternal
-
-	// Prevents false sharing on widespread platforms with
-	// 128 mod (cache line size) = 0 .
-	pad [128 - unsafe.Sizeof(poolLocalInternal{})%128]byte
+	private [privateCap]interface{} // Can be used only by the respective P.
+	pad     [128 - unsafe.Sizeof(poolLocalInternal{}) - (privateCap * objSize)]byte
 }
+
+// capacity of the private per-P pool: chosen so that poolLocal is 128 bytes
+// long to prevent false sharing of the cachelines.
+const privateCap = (128 - unsafe.Sizeof(poolLocalInternal{})) / objSize
+const objSize = unsafe.Sizeof(interface{}(nil))
 
 // from runtime
 func fastrand() uint32
@@ -98,8 +101,9 @@ func (p *Pool) Put(x interface{}) {
 		race.Disable()
 	}
 	l := p.pin()
-	if l.private == nil {
-		l.private = x
+	if l.privateLen < int(privateCap) {
+		l.private[l.privateLen] = x
+		l.privateLen += 1
 		x = nil
 	}
 	runtime_procUnpin()
@@ -125,9 +129,12 @@ func (p *Pool) Get() interface{} {
 	if race.Enabled {
 		race.Disable()
 	}
+	var x interface{}
 	l := p.pin()
-	x := l.private
-	l.private = nil
+	if l.privateLen > 0 {
+		l.privateLen -= 1
+		x = l.private[l.privateLen]
+	}
 	runtime_procUnpin()
 	if x == nil {
 		l.Lock()
@@ -226,7 +233,10 @@ func poolCleanup() {
 		allPools[i] = nil
 		for i := 0; i < int(p.localSize); i++ {
 			l := indexLocal(p.local, i)
-			l.private = nil
+			for j := range l.private {
+				l.private[j] = nil
+			}
+			l.privateLen = 0
 			for j := range l.shared {
 				l.shared[j] = nil
 			}

@@ -29,11 +29,11 @@ func TestPool(t *testing.T) {
 	Runtime_procPin()
 	p.Put("a")
 	p.Put("b")
-	if g := p.Get(); g != "a" {
-		t.Fatalf("got %#v; want a", g)
-	}
 	if g := p.Get(); g != "b" {
 		t.Fatalf("got %#v; want b", g)
+	}
+	if g := p.Get(); g != "a" {
+		t.Fatalf("got %#v; want a", g)
 	}
 	if g := p.Get(); g != nil {
 		t.Fatalf("got %#v; want nil", g)
@@ -147,6 +147,12 @@ func TestPoolStress(t *testing.T) {
 	}
 	for i := 0; i < P; i++ {
 		<-done
+	}
+}
+
+func TestPoollocalSize(t *testing.T) {
+	if int(PoolLocalSize)%128 != 0 {
+		t.Fatalf("expected sizeof(poolLocal) to be a multiple of 128, got %d", PoolLocalSize)
 	}
 }
 
