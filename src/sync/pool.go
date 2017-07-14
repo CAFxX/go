@@ -55,18 +55,20 @@ type Pool struct {
 
 // Local per-P Pool appendix.
 type poolLocalInternal struct {
-	private interface{}   // Can be used only by the respective P.
-	shared  []interface{} // Can be used by any P.
-	Mutex                 // Protects shared.
+	shared     []interface{} // Can be used by any P.
+	Mutex                    // Protects shared.
+	privateLen int           // How many objects currently in the private pool.
 }
 
 type poolLocal struct {
 	poolLocalInternal
-
-	// Prevents false sharing on widespread platforms with
-	// 128 mod (cache line size) = 0 .
-	pad [128 - unsafe.Sizeof(poolLocalInternal{})%128]byte
+	private [privateCap]interface{} // Can be used only by the respective P.
 }
+
+// capacity of the private per-P pool: chosen so that poolLocal is 128 bytes
+// long to prevent false sharing of the cachelines.
+const privateCap = (128 - unsafe.Sizeof(poolLocalInternal{})) / objSize
+const objSize = unsafe.Sizeof(interface{}(nil))
 
 // from runtime
 func fastrand() uint32
@@ -98,14 +100,16 @@ func (p *Pool) Put(x interface{}) {
 		race.Disable()
 	}
 	l := p.pin()
-	if l.private == nil {
-		l.private = x
+	if l.privateLen < l.privateCap {
+		l.private[l.privateLen] = x
+		l.privateLen += 1
 		x = nil
 	}
 	runtime_procUnpin()
 	if x != nil {
+		l.privateLen = l.privateCap * 2 / 3
 		l.Lock()
-		l.shared = append(l.shared, x)
+		l.shared = append(l.shared, x, l.private[l.privateLen:]...)
 		l.Unlock()
 	}
 	if race.Enabled {
@@ -125,18 +129,26 @@ func (p *Pool) Get() interface{} {
 	if race.Enabled {
 		race.Disable()
 	}
+	var x interface{}
 	l := p.pin()
-	x := l.private
-	l.private = nil
+	if l.privateLen > 0 {
+		l.privateLen -= 1
+		x = l.private[l.privateLen]
+	}
 	runtime_procUnpin()
 	if x == nil {
-		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
+		if len(l.shared) > 0 {
+			cnt := l.privateCap / 3
+			l.Lock()
+			if len(l.shared) < cnt {
+				cnt = len(l.shared)
+			}
+			if cnt > 0 {
+				l.shared, x, l.private[:cnt-1] = l.shared[cnt:], l.shared[cnt-1], l.shared[:cnt-1]
+				l.privateLen = cnt
+			}
+			l.Unlock()
 		}
-		l.Unlock()
 		if x == nil {
 			x = p.getSlow()
 		}
@@ -162,15 +174,17 @@ func (p *Pool) getSlow() (x interface{}) {
 	runtime_procUnpin()
 	for i := 0; i < int(size); i++ {
 		l := indexLocal(local, (pid+i+1)%int(size))
-		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
+		if len(l.shared) > 0 {
+			l.Lock()
+			last := len(l.shared) - 1
+			if last >= 0 {
+				x = l.shared[last]
+				l.shared = l.shared[:last]
+				l.Unlock()
+				break
+			}
 			l.Unlock()
-			break
 		}
-		l.Unlock()
 	}
 	return x
 }
@@ -226,7 +240,10 @@ func poolCleanup() {
 		allPools[i] = nil
 		for i := 0; i < int(p.localSize); i++ {
 			l := indexLocal(p.local, i)
-			l.private = nil
+			for j := range l.private {
+				l.private[j] = nil
+			}
+			l.privateLen = 0
 			for j := range l.shared {
 				l.shared[j] = nil
 			}
