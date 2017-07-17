@@ -100,16 +100,20 @@ func (p *Pool) Put(x interface{}) {
 		race.ReleaseMerge(poolRaceAddr(x))
 		race.Disable()
 	}
-	l := p.pin()
+	var b []interface{}
+	l, _ := p.pin()
 	if l.privateLen < int(privateCap) {
 		l.private[l.privateLen] = x
 		l.privateLen += 1
 		x = nil
+	} else {
+		l.privateLen = (l.privateLen + 1) / 2
+		b = l.private[l.privateLen:]
 	}
 	runtime_procUnpin()
 	if x != nil {
 		l.Lock()
-		l.shared = append(l.shared, x)
+		l.shared = append(append(l.shared, b...), x)
 		l.Unlock()
 	}
 	if race.Enabled {
@@ -130,23 +134,15 @@ func (p *Pool) Get() interface{} {
 		race.Disable()
 	}
 	var x interface{}
-	l := p.pin()
+	l, pid := p.pin()
 	if l.privateLen > 0 {
 		l.privateLen -= 1
 		x = l.private[l.privateLen]
 	}
 	runtime_procUnpin()
 	if x == nil {
-		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
-		}
-		l.Unlock()
-		if x == nil {
-			x = p.getSlow()
-		}
+		// TODO: inline and drop getSlow
+		x = p.getSlow(pid)
 	}
 	if race.Enabled {
 		race.Enable()
@@ -160,22 +156,24 @@ func (p *Pool) Get() interface{} {
 	return x
 }
 
-func (p *Pool) getSlow() (x interface{}) {
+func (p *Pool) getSlow(pid int) (x interface{}) {
 	// See the comment in pin regarding ordering of the loads.
 	size := atomic.LoadUintptr(&p.localSize) // load-acquire
 	local := p.local                         // load-consume
-	// Try to steal one element from other procs.
-	pid := runtime_procPin()
-	runtime_procUnpin()
-	for i := 0; i < int(size); i++ {
-		l := indexLocal(local, (pid+i+1)%int(size))
+	// Try to steal one element from this or other procs.
+	for i := 0; i < int(size) && x == nil; i++ {
+		l := indexLocal(local, (pid+i)%int(size))
+		if len(l.shared) == 0 {
+			// If the shared pool is empty there is no point in doing the lock dance.
+			// This may be racy, but it's safe because we recheck the actual length
+			// if we decide to lock.
+			continue
+		}
 		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
-			l.Unlock()
-			break
+		if last := len(l.shared) - 1; last >= 0 {
+			// TODO: attempt to pin a P again and opportunistically try to move some
+			// objects to its private pool.
+			l.shared, x = l.shared[:last], l.shared[last]
 		}
 		l.Unlock()
 	}
@@ -184,7 +182,7 @@ func (p *Pool) getSlow() (x interface{}) {
 
 // pin pins the current goroutine to P, disables preemption and returns poolLocal pool for the P.
 // Caller must call runtime_procUnpin() when done with the pool.
-func (p *Pool) pin() *poolLocal {
+func (p *Pool) pin() (*poolLocal, int) {
 	pid := runtime_procPin()
 	// In pinSlow we store to localSize and then to local, here we load in opposite order.
 	// Since we've disabled preemption, GC cannot happen in between.
@@ -193,12 +191,12 @@ func (p *Pool) pin() *poolLocal {
 	s := atomic.LoadUintptr(&p.localSize) // load-acquire
 	l := p.local                          // load-consume
 	if uintptr(pid) < s {
-		return indexLocal(l, pid)
+		return indexLocal(l, pid), pid
 	}
 	return p.pinSlow()
 }
 
-func (p *Pool) pinSlow() *poolLocal {
+func (p *Pool) pinSlow() (*poolLocal, int) {
 	// Retry under the mutex.
 	// Can not lock the mutex while pinned.
 	runtime_procUnpin()
@@ -209,7 +207,7 @@ func (p *Pool) pinSlow() *poolLocal {
 	s := p.localSize
 	l := p.local
 	if uintptr(pid) < s {
-		return indexLocal(l, pid)
+		return indexLocal(l, pid), pid
 	}
 	if p.local == nil {
 		allPools = append(allPools, p)
@@ -219,7 +217,7 @@ func (p *Pool) pinSlow() *poolLocal {
 	local := make([]poolLocal, size)
 	atomic.StorePointer(&p.local, unsafe.Pointer(&local[0])) // store-release
 	atomic.StoreUintptr(&p.localSize, uintptr(size))         // store-release
-	return &local[pid]
+	return &local[pid], pid
 }
 
 func poolCleanup() {
