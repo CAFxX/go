@@ -102,15 +102,24 @@ func (p *Pool) Put(x interface{}) {
 		race.Disable()
 	}
 	l := p.pin()
+	var y, z interface{}
 	if l.privateLen < int(privateCap) {
 		l.private[l.privateLen] = x
 		l.privateLen += 1
 		x = nil
+	} else {
+		// The private pool is full: let's ammortize the cost of acquiring the mutex
+		// to shared by also moving 2 elements from the private to the shared pool.
+		l.privateLen -= 1
+		y = l.private[l.privateLen]
+		l.privateLen -= 1
+		z = l.private[l.privateLen]
 	}
 	runtime_procUnpin()
 	if x != nil {
 		l.Lock()
-		l.shared = append(l.shared, x)
+		// If x != nil then the private pool was full, i.e. we also have y and z.
+		l.shared = append(l.shared, x, y, z)
 		l.Unlock()
 	}
 	if race.Enabled {
