@@ -4,8 +4,12 @@
 
 package sync
 
+import "unsafe"
+
 // Export for testing.
 var Runtime_Semacquire = runtime_Semacquire
 var Runtime_Semrelease = runtime_Semrelease
 var Runtime_procPin = runtime_procPin
 var Runtime_procUnpin = runtime_procUnpin
+
+const PoolLocalSize = unsafe.Sizeof(poolLocal{})

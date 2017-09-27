@@ -55,21 +55,22 @@ type Pool struct {
 
 // Local per-P Pool appendix.
 type poolLocalInternal struct {
-	Mutex                    // Protects shared.
-	shared     []interface{} // Can be used by any P.
-	privateLen int           // How many objects currently in the private pool.
+	Mutex                              // Protects shared.
+	shared     []interface{}           // Can be used by any P.
+	privateLen int                     // How many objects currently in the private pool.
+	private    [privateCap]interface{} // Can be used only by the respective P.
 }
+
+// Capacity of the private per-P pool: chosen so that on x64 poolLocalInternal
+// is as big as possible but less than 128 bytes long (to use as private pool
+// most of the space that would otherwise be wasted on padding the size of
+// poolLocal to a multiple of 128 bytes).
+const privateCap = 5
 
 type poolLocal struct {
 	poolLocalInternal
-	private [privateCap]interface{} // Can be used only by the respective P.
-	pad     [128 - unsafe.Sizeof(poolLocalInternal{}) - (privateCap * objSize)]byte
+	_ [128 - (unsafe.Sizeof(poolLocalInternal{}) % 128)]byte
 }
-
-// capacity of the private per-P pool: chosen so that poolLocal is 128 bytes
-// long to prevent false sharing of the cachelines.
-const privateCap = (128 - unsafe.Sizeof(poolLocalInternal{})) / objSize
-const objSize = unsafe.Sizeof(interface{}(nil))
 
 // from runtime
 func fastrand() uint32
