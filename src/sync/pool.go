@@ -199,7 +199,7 @@ func (p *Pool) getSlow() (x interface{}) {
 // to a private pool. The shared pool must be locked when calling this function.
 // It returns the shared pool (potentially shortened, if refilling succeeded).
 func (p *Pool) tryRefillPrivate(shared []interface{}) []interface{} {
-	const privateMinEmpty = 3
+	const privateMinEmpty = privateCap - privateCap/2
 
 	// Fast-path extracted from p.pin(). In case the slow path was needed we
 	// simply bail out and skip refilling the private pool.
@@ -208,15 +208,19 @@ func (p *Pool) tryRefillPrivate(shared []interface{}) []interface{} {
 	L := p.local                          // load-consume
 	if uintptr(pid) < s {
 		l := indexLocal(L, pid)
-		m := privateCap - privateMinEmpty - l.privateLen
-		if len(shared) < m {
-			m = len(shared)
-		}
+		lp := l.privateLen
+		m := privateCap - privateMinEmpty - lp
 		if m > 0 {
+			ls := len(shared)
+			if m > ls {
+				m = ls
+			}
 			// Move m objects from the shared to private pool
-			pl, sl := l.privateLen+m, len(shared)-m
-			copy(l.private[l.privateLen:pl], shared[sl:])
-			l.privateLen, shared = pl, shared[:sl]
+			for i := 0; i < m; i++ {
+				l.private[lp+i] = shared[ls-1-i]
+			}
+			l.privateLen += m
+			shared = shared[:ls-m]
 		}
 	}
 
