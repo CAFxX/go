@@ -152,6 +152,9 @@ func (p *Pool) Get() interface{} {
 		if last >= 0 {
 			x = l.shared[last]
 			l.shared = l.shared[:last]
+			if last >= 1 {
+				l.shared = p.tryRefillPrivate(l.shared)
+			}
 		}
 		l.Unlock()
 		if x == nil {
@@ -190,6 +193,35 @@ func (p *Pool) getSlow() (x interface{}) {
 		l.Unlock()
 	}
 	return x
+}
+
+// tryRefillPrivate attempts to move some objects from the supplied shared pool
+// to a private pool. The shared pool must be locked when calling this function.
+// It returns the shared pool (potentially shortened, if refilling succeeded).
+func (p *Pool) tryRefillPrivate(shared []interface{}) []interface{} {
+	const privateMinEmpty = 3
+
+	// Fast-path extracted from p.pin(). In case the slow path was needed we
+	// simply bail out and skip refilling the private pool.
+	pid := runtime_procPin()
+	s := atomic.LoadUintptr(&p.localSize) // load-acquire
+	L := p.local                          // load-consume
+	if uintptr(pid) < s {
+		l := indexLocal(L, pid)
+		m := privateCap - privateMinEmpty - l.privateLen
+		if len(shared) < m {
+			m = len(shared)
+		}
+		if m > 0 {
+			// Move m objects from the shared to private pool
+			pl, sl := l.privateLen+m, len(shared)-m
+			copy(l.private[l.privateLen:pl], shared[sl:])
+			l.privateLen, shared = pl, shared[:sl]
+		}
+	}
+
+	runtime_procUnpin()
+	return shared
 }
 
 // pin pins the current goroutine to P, disables preemption and returns poolLocal pool for the P.
