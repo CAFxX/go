@@ -148,13 +148,39 @@ func (p *Pool) Get() interface{} {
 	runtime_procUnpin()
 	if x == nil {
 		l.Lock()
+
 		last := len(l.shared) - 1
-		if last >= 0 {
+		if last == 0 {
+			// if the shared pool only has one object, simply grab it
+			x = l.shared[0]
+			l.shared = l.shared[:0]
+		} else if last > 0 {
+			// if the shared pool has more than one object, grab one and move some of
+			// the others to the private pool
 			x = l.shared[last]
-			l.shared = l.shared[:last]
-			if last >= 1 {
-				l.shared = p.tryRefillPrivate(l.shared)
+			// Fast-path extracted from p.pin(). In case the slow path was needed we
+			// simply bail out and skip refilling the private pool.
+			pid := runtime_procPin()
+			s := atomic.LoadUintptr(&p.localSize) // load-acquire
+			L := p.local                          // load-consume
+			if uintptr(pid) < s {
+				L := indexLocal(L, pid)
+				lp := L.privateLen
+				const privateMinEmpty = privateCap - privateCap/2
+				m := privateCap - privateMinEmpty - lp
+				if m > 0 {
+					if m > last {
+						m = last
+					}
+					// Move m objects from the shared to private pool
+					for i := 0; i < m; i++ {
+						L.private[lp+i] = l.shared[last-1-i]
+					}
+					L.privateLen += m
+					l.shared = l.shared[:last-m]
+				}
 			}
+			runtime_procUnpin()
 		}
 		l.Unlock()
 		if x == nil {
@@ -193,39 +219,6 @@ func (p *Pool) getSlow() (x interface{}) {
 		l.Unlock()
 	}
 	return x
-}
-
-// tryRefillPrivate attempts to move some objects from the supplied shared pool
-// to a private pool. The shared pool must be locked when calling this function.
-// It returns the shared pool (potentially shortened, if refilling succeeded).
-func (p *Pool) tryRefillPrivate(shared []interface{}) []interface{} {
-	const privateMinEmpty = privateCap - privateCap/2
-
-	// Fast-path extracted from p.pin(). In case the slow path was needed we
-	// simply bail out and skip refilling the private pool.
-	pid := runtime_procPin()
-	s := atomic.LoadUintptr(&p.localSize) // load-acquire
-	L := p.local                          // load-consume
-	if uintptr(pid) < s {
-		l := indexLocal(L, pid)
-		lp := l.privateLen
-		m := privateCap - privateMinEmpty - lp
-		if m > 0 {
-			ls := len(shared)
-			if m > ls {
-				m = ls
-			}
-			// Move m objects from the shared to private pool
-			for i := 0; i < m; i++ {
-				l.private[lp+i] = shared[ls-1-i]
-			}
-			l.privateLen += m
-			shared = shared[:ls-m]
-		}
-	}
-
-	runtime_procUnpin()
-	return shared
 }
 
 // pin pins the current goroutine to P, disables preemption and returns poolLocal pool for the P.
