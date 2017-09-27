@@ -139,54 +139,61 @@ func (p *Pool) Get() interface{} {
 	if race.Enabled {
 		race.Disable()
 	}
+
 	var x interface{}
+	var last int
+
 	l := p.pin()
 	if l.privateLen > 0 {
 		l.privateLen -= 1
 		x = l.private[l.privateLen]
+		runtime_procUnpin()
+		goto skipShared
 	}
-	runtime_procUnpin()
-	if x == nil {
-		l.Lock()
 
-		last := len(l.shared) - 1
-		if last == 0 {
-			// if the shared pool only has one object, simply grab it
-			x = l.shared[0]
-			l.shared = l.shared[:0]
-		} else if last > 0 {
-			// if the shared pool has more than one object, grab one and move some of
-			// the others to the private pool
-			x = l.shared[last]
-			// Fast-path extracted from p.pin(). In case the slow path was needed we
-			// simply bail out and skip refilling the private pool.
-			pid := runtime_procPin()
-			s := atomic.LoadUintptr(&p.localSize) // load-acquire
-			L := p.local                          // load-consume
-			if uintptr(pid) < s {
-				L := indexLocal(L, pid)
-				lp := L.privateLen
-				const privateMinEmpty = privateCap - privateCap/2
-				m := privateCap - privateMinEmpty - lp
-				if m > 0 {
-					if m > last {
-						m = last
-					}
-					// Move m objects from the shared to private pool
-					for i := 0; i < m; i++ {
-						L.private[lp+i] = l.shared[last-1-i]
-					}
-					L.privateLen += m
-					l.shared = l.shared[:last-m]
-				}
-			}
-			runtime_procUnpin()
-		}
+	runtime_procUnpin()
+	l.Lock()
+
+	last = len(l.shared) - 1
+	if last == 0 {
+		// if the shared pool only has one object, simply grab it
+		x = l.shared[0]
+		l.shared = l.shared[:0]
 		l.Unlock()
-		if x == nil {
-			x = p.getSlow()
+	} else if last > 0 {
+		// if the shared pool has more than one object, grab one and move some of
+		// the others to the private pool
+		x = l.shared[last]
+		// Fast-path extracted from p.pin(). In case the slow path was needed we
+		// simply bail out and skip refilling the private pool.
+		pid := runtime_procPin()
+		s := atomic.LoadUintptr(&p.localSize) // load-acquire
+		L := p.local                          // load-consume
+		if uintptr(pid) < s {
+			L := indexLocal(L, pid)
+			lp := L.privateLen
+			const privateMinEmpty = privateCap - privateCap/2
+			m := privateCap - privateMinEmpty - lp
+			if m > 0 {
+				if m > last {
+					m = last
+				}
+				// Move m objects from the shared to private pool
+				for i := 0; i < m; i++ {
+					L.private[lp+i] = l.shared[last-1-i]
+				}
+				L.privateLen += m
+				l.shared = l.shared[:last-m]
+			}
 		}
+		runtime_procUnpin()
+		l.Unlock()
+	} else {
+		l.Unlock()
+		x = p.getSlow()
 	}
+
+skipShared:
 	if race.Enabled {
 		race.Enable()
 		if x != nil {
