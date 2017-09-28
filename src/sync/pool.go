@@ -102,9 +102,9 @@ func (p *Pool) Put(x interface{}) {
 		race.Disable()
 	}
 	l := p.pin()
-	if l.privateLen < int(privateCap) {
-		l.private[l.privateLen] = x
-		l.privateLen += 1
+	if pl := l.privateLen; pl < privateCap {
+		l.private[pl] = x
+		l.privateLen = pl + 1
 		x = nil
 	}
 	runtime_procUnpin()
@@ -132,9 +132,10 @@ func (p *Pool) Get() interface{} {
 	}
 	var x interface{}
 	l := p.pin()
-	if l.privateLen > 0 {
-		l.privateLen -= 1
-		x = l.private[l.privateLen]
+	if pl := l.privateLen; pl > 0 {
+		pl -= 1
+		x = l.private[pl]
+		l.privateLen = pl
 	}
 	runtime_procUnpin()
 	if x == nil {
