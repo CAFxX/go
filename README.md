@@ -1,45 +1,64 @@
-# The Go Programming Language
+# The Go Programming Language - OmgSoManyKnobsMyHeadHurtsThankYou Edition
 
-Go is an open source programming language that makes it easy to build simple,
-reliable, and efficient software.
+A clone/fork of the [Go compiler](https://golang.org) that gives users a few extra knobs to control compilation. Only useful for those times when the Go compiler doesn't get it right by itself.
 
-![Gopher image](doc/gopher/fiveyears.jpg)
-*Gopher image by [Renee French][rf], licensed under [Creative Commons 3.0 Attributions license][cc3-by].*
+## A word of caution
 
-Our canonical Git repository is located at https://go.googlesource.com/go.
-There is a mirror of the repository at https://github.com/golang/go.
+You probably don't need this. Really.
 
-Unless otherwise noted, the Go source files are distributed under the
-BSD-style license found in the LICENSE file.
+The standard Go compiler should be enough in 99.9% of cases. So unless what your trying to do falls in the remaining 0.1%, you should stop reading now and go back to work. If you don't know whether your case falls or not in the 0.1%, then it most certainly doesn't and you also should stop reading now and go back to work.
 
-### Download and Install
+You have been warned.
 
-#### Binary Distributions
+The only good use of this is for very hot functions that can't be split into smaller, more readable and maintainable functions because of call overhead. Instead of playing pointless code golf with the compiler until each function fits inside its arbitrary inlining budget just mark them as `//go:yesinline`.
 
-Official binary distributions are available at https://golang.org/dl/.
+Note that all the limitations about what the compiler is actually able to inline still remain (e.g. no defer, closures, channels, for-loops, ...).
 
-After downloading a binary release, visit https://golang.org/doc/install
-or load doc/install.html in your web browser for installation
-instructions.
+## Knobs
 
-#### Install From Source
+This fork is identical to the standard compiler, but it adds a couple of knobs in case you want a little more control over the [inliner](https://golang.org/src/cmd/compile/internal/gc/inl.go) behavior.
 
-If a binary distribution is not available for your combination of
-operating system and architecture, visit
-https://golang.org/doc/install/source or load doc/install-source.html
-in your web browser for source installation instructions.
+- `-b <budget>` gc compile option: allows to change the inlining budget (default: `80`)
 
-### Contributing
+  ```sh
+  # set the inlining budget to 1000
+  go build -gcflags="-b 1000"
+  ```
 
-Go is the work of hundreds of contributors. We appreciate your help!
+- `//go:yesinline` func pragma: hint that function should be inlined
 
-To contribute, please read the contribution guidelines:
-	https://golang.org/doc/contribute.html
+  ```go
+  //go:yesinline
+  func FuncThatShouldBeInlined() {
+    // ...
+  }
+  ```
 
-Note that the Go project does not use GitHub pull requests, and that
-we use the issue tracker for bug reports and proposals only. See
-https://golang.org/wiki/Questions for a list of places to ask
-questions about the Go language.
+## How to build
 
-[rf]: https://reneefrench.blogspot.com/
-[cc3-by]: https://creativecommons.org/licenses/by/3.0/
+Make sure you have a recent Go installed and working. Then run:
+
+```bash
+git clone https://github.com/CAFxX/go
+(cd go/src; GOROOT_BOOTSTRAP=$(go env GOROOT) ./all.bash)
+# to use the built compiler, set:
+# export GOROOT=$(pwd)/go
+```
+
+## TODO
+
+- `//go:noinline` and `//go:yesinline` statement (function/method call) pragmas to give hints about whether to inline the (outermost) function/method call on the following line, e.g.
+
+  ```go
+  func baz(x int) int {
+    // inhibit inlining of foo (the call to bar is not affected)
+    //go:noinline
+    return foo(bar(x))
+  }
+  ```
+
+## License
+
+My patch is in the public domain. No warranties of any kind.
+
+Please refer to the LICENSE file for the license of the Go source code.
