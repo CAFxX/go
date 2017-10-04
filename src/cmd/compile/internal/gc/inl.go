@@ -33,6 +33,8 @@ import (
 	"fmt"
 )
 
+var inliningBudget int
+
 // Get the function's package. For ordinary functions it's on the ->sym, but for imported methods
 // the ->sym can be re-used in the local package, so peel it off the receiver's type.
 func fnpkg(fn *Node) *types.Pkg {
@@ -150,14 +152,22 @@ func caninl(fn *Node) {
 		return
 	}
 
-	const maxBudget = 80
+	maxBudget := int32(inliningBudget)
+	switch {
+	case fn.Func.Pragma&Yesinline != 0:
+		maxBudget = 0x7fffffff
+	case maxBudget <= 0:
+		reason = "function too complex"
+		return
+	}
+
 	visitor := hairyVisitor{budget: maxBudget}
 	if visitor.visitList(fn.Nbody) {
 		reason = visitor.reason
 		return
 	}
 	if visitor.budget < 0 {
-		reason = "function too complex"
+		reason = fmt.Sprintf("function too complex: cost %d exceeds budget %d", maxBudget-visitor.budget, maxBudget)
 		return
 	}
 
