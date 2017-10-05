@@ -25,7 +25,7 @@ This fork is identical to the standard compiler, but it adds a couple of knobs i
   go build -gcflags="-b 1000"
   ```
 
-- `//go:yesinline` func pragma: hint that function should be inlined
+- `//go:yesinline` func pragma: hint that function should be inlined even if non-leaf or complex
 
   ```go
   //go:yesinline
