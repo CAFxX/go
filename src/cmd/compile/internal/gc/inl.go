@@ -153,15 +153,17 @@ func caninl(fn *Node) {
 	}
 
 	maxBudget := int32(inliningBudget)
+	leafOnly := Debug['l'] < 4
 	switch {
 	case fn.Func.Pragma&Yesinline != 0:
 		maxBudget = 0x7fffffff
+		leafOnly = false
 	case maxBudget <= 0:
 		reason = "function too complex"
 		return
 	}
 
-	visitor := hairyVisitor{budget: maxBudget}
+	visitor := hairyVisitor{budget: maxBudget, leafOnly: leafOnly}
 	if visitor.visitList(fn.Nbody) {
 		reason = visitor.reason
 		return
@@ -198,8 +200,9 @@ func caninl(fn *Node) {
 // hairyVisitor visits a function body to determine its inlining
 // hairiness and whether or not it can be inlined.
 type hairyVisitor struct {
-	budget int32
-	reason string
+	budget   int32
+	leafOnly bool
+	reason   string
 }
 
 // Look for anything we want to punt on.
@@ -245,7 +248,7 @@ func (v *hairyVisitor) visit(n *Node) bool {
 				break
 			}
 		}
-		if Debug['l'] < 4 {
+		if v.leafOnly {
 			v.reason = "non-leaf function"
 			return true
 		}
@@ -263,14 +266,14 @@ func (v *hairyVisitor) visit(n *Node) bool {
 			v.budget -= inlfn.InlCost
 			break
 		}
-		if Debug['l'] < 4 {
+		if v.leafOnly {
 			v.reason = "non-leaf method"
 			return true
 		}
 
 	// Things that are too hairy, irrespective of the budget
 	case OCALL, OCALLINTER, OPANIC, ORECOVER:
-		if Debug['l'] < 4 {
+		if v.leafOnly {
 			v.reason = "non-leaf op " + n.Op.String()
 			return true
 		}
