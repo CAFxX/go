@@ -18,14 +18,21 @@ Note that all the limitations about what the compiler is actually able to inline
 
 This fork is identical to the standard compiler, but it adds a couple of knobs in case you want a little more control over the [inliner](https://golang.org/src/cmd/compile/internal/gc/inl.go) behavior.
 
-- `-b <budget>` gc compile option: allows to change the inlining budget (default: `80`)
+- `-inl-budget <budget>` gc compile option: allows to change the inlining budget (default: `80`)
 
   ```sh
   # set the inlining budget to 1000
-  go build -gcflags="-b 1000"
+  go build -gcflags="-inl-budget=1000"
   ```
 
-- `//go:yesinline` func pragma: hint that function should be inlined even if non-leaf or complex
+- `-inl-leafonly <bool>` gc compile option: forces the the compiler to only inline leaf functions (default: `true`, WARNING: setting it to `false` is experimental, may break your code)
+
+  ```sh
+  # allow inlining non-leaf functions
+  go build -gcflags="-inl-leafonly=false"
+  ```
+
+- `//go:yesinline` func pragma: hint that function should be inlined even if non-leaf or over inlining budget
 
   ```go
   //go:yesinline
