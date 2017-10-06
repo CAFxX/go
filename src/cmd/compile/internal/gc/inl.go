@@ -34,6 +34,7 @@ import (
 )
 
 var inliningBudget int
+var inlineNonLeaf bool
 
 // Get the function's package. For ordinary functions it's on the ->sym, but for imported methods
 // the ->sym can be re-used in the local package, so peel it off the receiver's type.
@@ -153,7 +154,7 @@ func caninl(fn *Node) {
 	}
 
 	maxBudget := int32(inliningBudget)
-	leafOnly := Debug['l'] < 4
+	leafOnly := Debug['l'] < 4 && !inlineNonLeaf
 	switch {
 	case fn.Func.Pragma&Yesinline != 0:
 		maxBudget = 0x7fffffff
