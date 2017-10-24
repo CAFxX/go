@@ -97,10 +97,21 @@ func (b *Buffer) Reset() {
 	b.lastRead = opInvalid
 }
 
+func (b *Buffer) tryReset() bool {
+	if b.empty() && b.off != 0 {
+		b.Reset()
+		return true
+	}
+	return false
+}
+
 // tryGrowByReslice is a inlineable version of grow for the fast-case where the
 // internal buffer only needs to be resliced.
 // It returns the index where bytes should be written and whether it succeeded.
 func (b *Buffer) tryGrowByReslice(n int) (int, bool) {
+	// If buffer is empty, reset to recover space.
+	b.tryReset()
+	// Attempt to reslice
 	if l := len(b.buf); n <= cap(b.buf)-l {
 		b.buf = b.buf[:l+n]
 		return l, true
@@ -111,21 +122,14 @@ func (b *Buffer) tryGrowByReslice(n int) (int, bool) {
 // grow grows the buffer to guarantee space for n more bytes.
 // It returns the index where bytes should be written.
 // If the buffer can't grow it will panic with ErrTooLarge.
+// Before calling grow(n) you should call tryGrowByReslice(n).
 func (b *Buffer) grow(n int) int {
-	m := b.Len()
-	// If buffer is empty, reset to recover space.
-	if m == 0 && b.off != 0 {
-		b.Reset()
-	}
-	// Try to grow by means of a reslice.
-	if i, ok := b.tryGrowByReslice(n); ok {
-		return i
-	}
 	// Check if we can make use of bootstrap array.
 	if b.buf == nil && n <= len(b.bootstrap) {
 		b.buf = b.bootstrap[:n]
 		return 0
 	}
+	m := b.Len()
 	c := cap(b.buf)
 	if n <= c/2-m {
 		// We can slide things down instead of allocating a new
@@ -155,6 +159,9 @@ func (b *Buffer) grow(n int) int {
 func (b *Buffer) Grow(n int) {
 	if n < 0 {
 		panic("bytes.Buffer.Grow: negative count")
+	}
+	if _, ok := b.tryGrowByReslice(n); ok {
+		return
 	}
 	m := b.grow(n)
 	b.buf = b.buf[:m]
@@ -197,7 +204,10 @@ const MinRead = 512
 func (b *Buffer) ReadFrom(r io.Reader) (n int64, err error) {
 	b.lastRead = opInvalid
 	for {
-		i := b.grow(MinRead)
+		i, ok := b.tryGrowByReslice(MinRead)
+		if !ok {
+			i = b.grow(MinRead)
+		}
 		m, e := r.Read(b.buf[i:cap(b.buf)])
 		if m < 0 {
 			panic(errNegativeRead)
@@ -292,9 +302,7 @@ func (b *Buffer) WriteRune(r rune) (n int, err error) {
 // otherwise it is nil.
 func (b *Buffer) Read(p []byte) (n int, err error) {
 	b.lastRead = opInvalid
-	if b.empty() {
-		// Buffer is empty, reset to recover space.
-		b.Reset()
+	if b.tryReset() {
 		if len(p) == 0 {
 			return 0, nil
 		}
@@ -329,9 +337,7 @@ func (b *Buffer) Next(n int) []byte {
 // ReadByte reads and returns the next byte from the buffer.
 // If no byte is available, it returns error io.EOF.
 func (b *Buffer) ReadByte() (byte, error) {
-	if b.empty() {
-		// Buffer is empty, reset to recover space.
-		b.Reset()
+	if b.tryReset() {
 		return 0, io.EOF
 	}
 	c := b.buf[b.off]
@@ -346,9 +352,7 @@ func (b *Buffer) ReadByte() (byte, error) {
 // If the bytes are an erroneous UTF-8 encoding, it
 // consumes one byte and returns U+FFFD, 1.
 func (b *Buffer) ReadRune() (r rune, size int, err error) {
-	if b.empty() {
-		// Buffer is empty, reset to recover space.
-		b.Reset()
+	if b.tryReset() {
 		return 0, 0, io.EOF
 	}
 	c := b.buf[b.off]
