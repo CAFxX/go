@@ -68,9 +68,6 @@ type poolLocal struct {
 	pad [128 - unsafe.Sizeof(poolLocalInternal{})%128]byte
 }
 
-// from runtime
-func fastrand() uint32
-
 var poolRaceHash [128]uint64
 
 // poolRaceAddr returns an address to use as the synchronization point
@@ -90,7 +87,7 @@ func (p *Pool) Put(x interface{}) {
 		return
 	}
 	if race.Enabled {
-		if fastrand()%4 == 0 {
+		if runtime_fastrandn(4) == 0 {
 			// Randomly drop x on floor.
 			return
 		}
@@ -100,10 +97,9 @@ func (p *Pool) Put(x interface{}) {
 	l := p.pin()
 	if l.private == nil {
 		l.private = x
-		x = nil
-	}
-	runtime_procUnpin()
-	if x != nil {
+		runtime_procUnpin()
+	} else {
+		runtime_procUnpin()
 		l.Lock()
 		l.shared = append(l.shared, x)
 		l.Unlock()
@@ -125,30 +121,42 @@ func (p *Pool) Get() interface{} {
 	if race.Enabled {
 		race.Disable()
 	}
+
 	l := p.pin()
 	x := l.private
-	l.private = nil
+	if x != nil {
+		l.private = nil
+		runtime_procUnpin()
+		goto found
+	}
 	runtime_procUnpin()
-	if x == nil {
+	if len(l.shared) > 0 { // bening race
 		l.Lock()
 		last := len(l.shared) - 1
 		if last >= 0 {
 			x = l.shared[last]
 			l.shared = l.shared[:last]
+			l.Unlock()
+			goto found
 		}
 		l.Unlock()
-		if x == nil {
-			x = p.getSlow()
-		}
 	}
+	if x = p.getSlow(); x != nil {
+		goto found
+	}
+
 	if race.Enabled {
 		race.Enable()
-		if x != nil {
-			race.Acquire(poolRaceAddr(x))
-		}
 	}
-	if x == nil && p.New != nil {
-		x = p.New()
+	if p.New != nil {
+		return p.New()
+	}
+	return nil
+
+found:
+	if race.Enabled {
+		race.Enable()
+		race.Acquire(poolRaceAddr(x))
 	}
 	return x
 }
@@ -158,10 +166,18 @@ func (p *Pool) getSlow() (x interface{}) {
 	size := atomic.LoadUintptr(&p.localSize) // load-acquire
 	local := p.local                         // load-consume
 	// Try to steal one element from other procs.
-	pid := runtime_procPin()
-	runtime_procUnpin()
+	pid := runtime_procId()
 	for i := 0; i < int(size); i++ {
-		l := indexLocal(local, (pid+i+1)%int(size))
+		if pid++; pid >= int(size) {
+			pid = 0
+		}
+		l := indexLocal(local, pid)
+		if len(l.shared) == 0 {
+			// l.shared is probably empty: skip locking. This check is
+			// racy, but it's benign because the worst case is that we
+			// don't immediately reuse a reusable object.
+			continue
+		}
 		l.Lock()
 		last := len(l.shared) - 1
 		if last >= 0 {
@@ -183,10 +199,8 @@ func (p *Pool) pin() *poolLocal {
 	// Since we've disabled preemption, GC cannot happen in between.
 	// Thus here we must observe local at least as large localSize.
 	// We can observe a newer/larger local, it is fine (we must observe its zero-initialized-ness).
-	s := atomic.LoadUintptr(&p.localSize) // load-acquire
-	l := p.local                          // load-consume
-	if uintptr(pid) < s {
-		return indexLocal(l, pid)
+	if uintptr(pid) < atomic.LoadUintptr(&p.localSize) { // load-acquire p.localSize
+		return indexLocal(p.local, pid) // load-consume p.local
 	}
 	return p.pinSlow()
 }
@@ -199,10 +213,8 @@ func (p *Pool) pinSlow() *poolLocal {
 	defer allPoolsMu.Unlock()
 	pid := runtime_procPin()
 	// poolCleanup won't be called while we are pinned.
-	s := p.localSize
-	l := p.local
-	if uintptr(pid) < s {
-		return indexLocal(l, pid)
+	if uintptr(pid) < p.localSize {
+		return indexLocal(p.local, pid)
 	}
 	if p.local == nil {
 		allPools = append(allPools, p)
@@ -256,3 +268,5 @@ func indexLocal(l unsafe.Pointer, i int) *poolLocal {
 func runtime_registerPoolCleanup(cleanup func())
 func runtime_procPin() int
 func runtime_procUnpin()
+func runtime_procId() int
+func runtime_fastrandn(n uint32) uint32
