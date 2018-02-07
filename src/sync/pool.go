@@ -44,8 +44,9 @@ import (
 type Pool struct {
 	noCopy noCopy
 
-	local     unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal
-	localSize uintptr        // size of the local array
+	local      unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal
+	localSize  uintptr        // size of the local array
+	sharedSize int64          // sum of the sizes of the shared pools
 
 	// New optionally specifies a function to generate
 	// a value when Get would otherwise return nil.
@@ -105,6 +106,7 @@ func (p *Pool) Put(x interface{}) {
 	runtime_procUnpin()
 	if x != nil {
 		l.Lock()
+		atomic.AddInt64(&p.sharedSize, 1)
 		l.shared = append(l.shared, x)
 		l.Unlock()
 	}
@@ -129,7 +131,7 @@ func (p *Pool) Get() interface{} {
 	x := l.private
 	l.private = nil
 	runtime_procUnpin()
-	if x == nil {
+	if x == nil && atomic.LoadInt64(&p.sharedSize) > 0 {
 		l.Lock()
 		last := len(l.shared) - 1
 		if last >= 0 {
@@ -139,6 +141,9 @@ func (p *Pool) Get() interface{} {
 		l.Unlock()
 		if x == nil {
 			x = p.getSlow()
+		}
+		if x != nil {
+			atomic.AddInt64(&p.sharedSize, -1)
 		}
 	}
 	if race.Enabled {
@@ -212,6 +217,7 @@ func (p *Pool) pinSlow() *poolLocal {
 	local := make([]poolLocal, size)
 	atomic.StorePointer(&p.local, unsafe.Pointer(&local[0])) // store-release
 	atomic.StoreUintptr(&p.localSize, uintptr(size))         // store-release
+	atomic.StoreInt64(&p.sharedSize, 0)
 	return &local[pid]
 }
 
@@ -234,6 +240,7 @@ func poolCleanup() {
 		}
 		p.local = nil
 		p.localSize = 0
+		p.sharedSize = 0
 	}
 	allPools = []*Pool{}
 }
