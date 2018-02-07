@@ -56,9 +56,10 @@ type Pool struct {
 
 // Local per-P Pool appendix.
 type poolLocalInternal struct {
-	private interface{}   // Can be used only by the respective P.
-	shared  []interface{} // Can be used by any P.
-	Mutex                 // Protects shared.
+	private    interface{}   // Can be used only by the respective P.
+	shared     []interface{} // Can be used by any P.
+	Mutex                    // Protects shared.
+	sharedSize int64         // Number of elements in shared
 }
 
 type poolLocal struct {
@@ -108,6 +109,7 @@ func (p *Pool) Put(x interface{}) {
 		l.Lock()
 		atomic.AddInt64(&p.sharedSize, 1)
 		l.shared = append(l.shared, x)
+		atomic.StoreInt64(&l.sharedSize, int64(len(l.shared)))
 		l.Unlock()
 	}
 	if race.Enabled {
@@ -132,13 +134,15 @@ func (p *Pool) Get() interface{} {
 	l.private = nil
 	runtime_procUnpin()
 	if x == nil && atomic.LoadInt64(&p.sharedSize) > 0 {
-		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
+		if atomic.LoadInt64(&l.sharedSize) > 0 {
+			l.Lock()
+			last := len(l.shared) - 1
+			if last >= 0 {
+				x = l.shared[last]
+				l.shared = l.shared[:last]
+			}
+			l.Unlock()
 		}
-		l.Unlock()
 		if x == nil {
 			x = p.getSlow()
 		}
@@ -167,11 +171,16 @@ func (p *Pool) getSlow() (x interface{}) {
 	runtime_procUnpin()
 	for i := 0; i < int(size); i++ {
 		l := indexLocal(local, (pid+i+1)%int(size))
+		if atomic.LoadInt64(&l.sharedSize) == 0 {
+			// l.shared is probably empty, skip locking
+			continue
+		}
 		l.Lock()
 		last := len(l.shared) - 1
 		if last >= 0 {
 			x = l.shared[last]
 			l.shared = l.shared[:last]
+			atomic.StoreInt64(&l.sharedSize, int64(len(l.shared)))
 			l.Unlock()
 			break
 		}
@@ -237,6 +246,7 @@ func poolCleanup() {
 				l.shared[j] = nil
 			}
 			l.shared = nil
+			l.sharedSize = 0
 		}
 		p.local = nil
 		p.localSize = 0
