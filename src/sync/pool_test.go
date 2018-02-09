@@ -173,3 +173,14 @@ func BenchmarkPoolOverflow(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkPoolUnderflow(b *testing.B) {
+	var p Pool
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			p.Put(1)
+			p.Get()
+			p.Get()
+		}
+	})
+}
