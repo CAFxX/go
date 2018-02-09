@@ -56,10 +56,12 @@ type Pool struct {
 
 // Local per-P Pool appendix.
 type poolLocalInternal struct {
-	private    interface{}   // Can be used only by the respective P.
-	shared     []interface{} // Can be used by any P.
-	Mutex                    // Protects shared.
-	sharedSize int64         // Number of elements in shared
+	private interface{}   // Can be used only by the respective P.
+	shared  []interface{} // Can be used by any P.
+	Mutex                 // Protects shared.
+	// TODO: sharedSize would not be required if it was possible to
+	// atomically (i.e. without acquiring the Mutex) load len(shared)
+	sharedSize int64 // Number of elements in shared
 }
 
 type poolLocal struct {
@@ -107,8 +109,8 @@ func (p *Pool) Put(x interface{}) {
 	runtime_procUnpin()
 	if x != nil {
 		l.Lock()
-		atomic.AddInt64(&p.sharedSize, 1)
 		l.shared = append(l.shared, x)
+		atomic.AddInt64(&p.sharedSize, 1)
 		atomic.StoreInt64(&l.sharedSize, int64(len(l.shared)))
 		l.Unlock()
 	}
@@ -133,17 +135,18 @@ func (p *Pool) Get() interface{} {
 	x := l.private
 	l.private = nil
 	runtime_procUnpin()
-	if x == nil && atomic.LoadInt64(&p.sharedSize) > 0 {
+	if x == nil {
 		if atomic.LoadInt64(&l.sharedSize) > 0 {
 			l.Lock()
 			last := len(l.shared) - 1
 			if last >= 0 {
 				x = l.shared[last]
 				l.shared = l.shared[:last]
+				atomic.StoreInt64(&l.sharedSize, int64(len(l.shared)))
 			}
 			l.Unlock()
 		}
-		if x == nil {
+		if x == nil && atomic.LoadInt64(&p.sharedSize) > 0 {
 			x = p.getSlow()
 		}
 		if x != nil {
