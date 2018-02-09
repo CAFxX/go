@@ -44,9 +44,8 @@ import (
 type Pool struct {
 	noCopy noCopy
 
-	local      unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal
-	localSize  uintptr        // size of the local array
-	sharedSize int64          // sum of the sizes of the shared pools
+	local     unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal
+	localSize uintptr        // size of the local array
 
 	// New optionally specifies a function to generate
 	// a value when Get would otherwise return nil.
@@ -110,7 +109,6 @@ func (p *Pool) Put(x interface{}) {
 	if x != nil {
 		l.Lock()
 		l.shared = append(l.shared, x)
-		atomic.AddInt64(&p.sharedSize, 1)
 		atomic.StoreInt64(&l.sharedSize, int64(len(l.shared)))
 		l.Unlock()
 	}
@@ -146,11 +144,8 @@ func (p *Pool) Get() interface{} {
 			}
 			l.Unlock()
 		}
-		if x == nil && atomic.LoadInt64(&p.sharedSize) > 0 {
+		if x == nil {
 			x = p.getSlow()
-		}
-		if x != nil {
-			atomic.AddInt64(&p.sharedSize, -1)
 		}
 	}
 	if race.Enabled {
@@ -229,7 +224,6 @@ func (p *Pool) pinSlow() *poolLocal {
 	local := make([]poolLocal, size)
 	atomic.StorePointer(&p.local, unsafe.Pointer(&local[0])) // store-release
 	atomic.StoreUintptr(&p.localSize, uintptr(size))         // store-release
-	atomic.StoreInt64(&p.sharedSize, 0)
 	return &local[pid]
 }
 
@@ -253,7 +247,6 @@ func poolCleanup() {
 		}
 		p.local = nil
 		p.localSize = 0
-		p.sharedSize = 0
 	}
 	allPools = []*Pool{}
 }
