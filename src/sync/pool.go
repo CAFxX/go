@@ -195,10 +195,8 @@ func (p *Pool) pin() *poolLocal {
 	// Since we've disabled preemption, GC cannot happen in between.
 	// Thus here we must observe local at least as large localSize.
 	// We can observe a newer/larger local, it is fine (we must observe its zero-initialized-ness).
-	s := atomic.LoadUintptr(&p.localSize) // load-acquire
-	l := p.local                          // load-consume
-	if uintptr(pid) < s {
-		return indexLocal(l, pid)
+	if uintptr(pid) < atomic.LoadUintptr(&p.localSize) { // load-acquire p.localSize
+		return indexLocal(p.local, pid) // load-consume p.local
 	}
 	return p.pinSlow()
 }
@@ -211,10 +209,8 @@ func (p *Pool) pinSlow() *poolLocal {
 	defer allPoolsMu.Unlock()
 	pid := runtime_procPin()
 	// poolCleanup won't be called while we are pinned.
-	s := p.localSize
-	l := p.local
-	if uintptr(pid) < s {
-		return indexLocal(l, pid)
+	if uintptr(pid) < p.localSize {
+		return indexLocal(p.local, pid)
 	}
 	if p.local == nil {
 		allPools = append(allPools, p)
