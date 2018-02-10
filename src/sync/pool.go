@@ -101,9 +101,9 @@ func (p *Pool) Put(x interface{}) {
 	if l.private == nil {
 		l.private = x
 		x = nil
-	}
-	runtime_procUnpin()
-	if x != nil {
+		runtime_procUnpin()
+	} else {
+		runtime_procUnpin()
 		l.Lock()
 		l.shared = append(l.shared, x)
 		l.Unlock()
@@ -125,29 +125,29 @@ func (p *Pool) Get() interface{} {
 	if race.Enabled {
 		race.Disable()
 	}
+
 	l := p.pin()
 	x := l.private
 	if x != nil {
 		l.private = nil
 		runtime_procUnpin()
-	} else {
-		if len(l.shared) > 0 {
-			runtime_procUnpin()
-			l.Lock()
-			last := len(l.shared) - 1
-			if last >= 0 {
-				x = l.shared[last]
-				l.shared = l.shared[:last]
-				l.Unlock()
-			} else {
-				l.Unlock()
-				x = p.getSlow()
-			}
+	} else if len(l.shared) > 0 {
+		runtime_procUnpin()
+		l.Lock()
+		last := len(l.shared) - 1
+		if last >= 0 {
+			x = l.shared[last]
+			l.shared = l.shared[:last]
+			l.Unlock()
 		} else {
-			runtime_procUnpin()
+			l.Unlock()
 			x = p.getSlow()
 		}
+	} else {
+		runtime_procUnpin()
+		x = p.getSlow()
 	}
+
 	if race.Enabled {
 		race.Enable()
 		if x != nil {
@@ -171,8 +171,8 @@ func (p *Pool) getSlow() (x interface{}) {
 		l := indexLocal(local, (pid+i+1)%int(size))
 		if len(l.shared) == 0 {
 			// l.shared is probably empty, skip locking. This check is
-			// racy, but it's benign because in the worst case we don't
-			// immediately reuse a reusable object.
+			// racy, but it's benign because the worst case is that we
+			// don't immediately reuse a reusable object.
 			continue
 		}
 		l.Lock()
