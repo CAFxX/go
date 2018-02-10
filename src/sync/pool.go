@@ -58,9 +58,6 @@ type poolLocalInternal struct {
 	private interface{}   // Can be used only by the respective P.
 	shared  []interface{} // Can be used by any P.
 	Mutex                 // Protects shared.
-	// TODO: sharedSize would not be required if it was possible to
-	// atomically (i.e. without acquiring the Mutex) load len(shared)
-	sharedSize int64 // Number of elements in shared
 }
 
 type poolLocal struct {
@@ -109,7 +106,6 @@ func (p *Pool) Put(x interface{}) {
 	if x != nil {
 		l.Lock()
 		l.shared = append(l.shared, x)
-		atomic.StoreInt64(&l.sharedSize, int64(len(l.shared)))
 		l.Unlock()
 	}
 	if race.Enabled {
@@ -131,20 +127,24 @@ func (p *Pool) Get() interface{} {
 	}
 	l := p.pin()
 	x := l.private
-	l.private = nil
-	runtime_procUnpin()
-	if x == nil {
-		if atomic.LoadInt64(&l.sharedSize) > 0 {
+	if x != nil {
+		l.private = nil
+		runtime_procUnpin()
+	} else {
+		if len(l.shared) > 0 {
+			runtime_procUnpin()
 			l.Lock()
 			last := len(l.shared) - 1
 			if last >= 0 {
 				x = l.shared[last]
 				l.shared = l.shared[:last]
-				atomic.StoreInt64(&l.sharedSize, int64(len(l.shared)))
+				l.Unlock()
+			} else {
+				l.Unlock()
+				x = p.getSlow()
 			}
-			l.Unlock()
-		}
-		if x == nil {
+		} else {
+			runtime_procUnpin()
 			x = p.getSlow()
 		}
 	}
@@ -169,8 +169,10 @@ func (p *Pool) getSlow() (x interface{}) {
 	runtime_procUnpin()
 	for i := 0; i < int(size); i++ {
 		l := indexLocal(local, (pid+i+1)%int(size))
-		if atomic.LoadInt64(&l.sharedSize) == 0 {
-			// l.shared is probably empty, skip locking
+		if len(l.shared) == 0 {
+			// l.shared is probably empty, skip locking. This check is
+			// racy, but it's benign because in the worst case we don't
+			// immediately reuse a reusable object.
 			continue
 		}
 		l.Lock()
@@ -178,7 +180,6 @@ func (p *Pool) getSlow() (x interface{}) {
 		if last >= 0 {
 			x = l.shared[last]
 			l.shared = l.shared[:last]
-			atomic.StoreInt64(&l.sharedSize, int64(len(l.shared)))
 			l.Unlock()
 			break
 		}
@@ -243,7 +244,6 @@ func poolCleanup() {
 				l.shared[j] = nil
 			}
 			l.shared = nil
-			l.sharedSize = 0
 		}
 		p.local = nil
 		p.localSize = 0
