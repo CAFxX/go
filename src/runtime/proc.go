@@ -4908,6 +4908,12 @@ func sync_runtime_procUnpin() {
 	procUnpin()
 }
 
+//go:linkname sync_runtime_procId sync.runtime_procId
+//go:nosplit
+func sync_runtime_procId() int {
+	return int(getg().m.p.ptr().id)
+}
+
 //go:linkname sync_atomic_runtime_procPin sync/atomic.runtime_procPin
 //go:nosplit
 func sync_atomic_runtime_procPin() int {

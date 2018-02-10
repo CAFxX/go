@@ -165,8 +165,7 @@ func (p *Pool) getSlow() (x interface{}) {
 	size := atomic.LoadUintptr(&p.localSize) // load-acquire
 	local := p.local                         // load-consume
 	// Try to steal one element from other procs.
-	pid := runtime_procPin()
-	runtime_procUnpin()
+	pid := runtime_procId()
 	for i := 0; i < int(size); i++ {
 		l := indexLocal(local, (pid+i+1)%int(size))
 		if len(l.shared) == 0 {
@@ -269,3 +268,4 @@ func indexLocal(l unsafe.Pointer, i int) *poolLocal {
 func runtime_registerPoolCleanup(cleanup func())
 func runtime_procPin() int
 func runtime_procUnpin()
+func runtime_procId() int
