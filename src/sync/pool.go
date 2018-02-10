@@ -131,7 +131,9 @@ func (p *Pool) Get() interface{} {
 	if x != nil {
 		l.private = nil
 		runtime_procUnpin()
-	} else if len(l.shared) > 0 {
+		goto found
+	}
+	if len(l.shared) > 0 { // bening race
 		runtime_procUnpin()
 		l.Lock()
 		last := len(l.shared) - 1
@@ -139,23 +141,28 @@ func (p *Pool) Get() interface{} {
 			x = l.shared[last]
 			l.shared = l.shared[:last]
 			l.Unlock()
-		} else {
-			l.Unlock()
-			x = p.getSlow()
+			goto found
 		}
+		l.Unlock()
 	} else {
 		runtime_procUnpin()
-		x = p.getSlow()
+	}
+	if x = p.getSlow(); x != nil {
+		goto found
 	}
 
 	if race.Enabled {
 		race.Enable()
-		if x != nil {
-			race.Acquire(poolRaceAddr(x))
-		}
 	}
-	if x == nil && p.New != nil {
-		x = p.New()
+	if p.New != nil {
+		return p.New()
+	}
+	return nil
+
+found:
+	if race.Enabled {
+		race.Enable()
+		race.Acquire(poolRaceAddr(x))
 	}
 	return x
 }
