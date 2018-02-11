@@ -174,7 +174,10 @@ func (p *Pool) getSlow() (x interface{}) {
 	// Try to steal one element from other procs.
 	pid := runtime_procId()
 	for i := 0; i < int(size); i++ {
-		l := indexLocal(local, (pid+i+1)%int(size))
+		if pid++; pid >= int(size) {
+			pid = 0
+		}
+		l := indexLocal(local, pid)
 		if len(l.shared) == 0 {
 			// l.shared is probably empty, skip locking. This check is
 			// racy, but it's benign because the worst case is that we
