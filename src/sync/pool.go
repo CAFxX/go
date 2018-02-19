@@ -130,13 +130,15 @@ func (p *Pool) Get() interface{} {
 	l.private = nil
 	runtime_procUnpin()
 	if x == nil {
-		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
+		if len(l.shared) > 0 {
+			l.Lock()
+			last := len(l.shared) - 1
+			if last >= 0 {
+				x = l.shared[last]
+				l.shared = l.shared[:last]
+			}
+			l.Unlock()
 		}
-		l.Unlock()
 		if x == nil {
 			x = p.getSlow()
 		}
@@ -162,6 +164,9 @@ func (p *Pool) getSlow() (x interface{}) {
 	runtime_procUnpin()
 	for i := 0; i < int(size); i++ {
 		l := indexLocal(local, (pid+i+1)%int(size))
+		if len(l.shared) == 0 {
+			continue
+		}
 		l.Lock()
 		last := len(l.shared) - 1
 		if last >= 0 {
