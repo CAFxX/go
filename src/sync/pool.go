@@ -55,9 +55,7 @@ type Pool struct {
 
 // Local per-P Pool appendix.
 type poolLocalInternal struct {
-	private interface{}   // Can be used only by the respective P.
-	shared  []interface{} // Can be used by any P.
-	Mutex                 // Protects shared.
+	private []interface{} // Can be used only by the respective P.
 }
 
 type poolLocal struct {
@@ -98,16 +96,8 @@ func (p *Pool) Put(x interface{}) {
 		race.Disable()
 	}
 	l := p.pin()
-	if l.private == nil {
-		l.private = x
-		x = nil
-	}
+	l.private = append(l.private, x)
 	runtime_procUnpin()
-	if x != nil {
-		l.Lock()
-		l.shared = append(l.shared, x)
-		l.Unlock()
-	}
 	if race.Enabled {
 		race.Enable()
 	}
@@ -121,26 +111,17 @@ func (p *Pool) Put(x interface{}) {
 //
 // If Get would otherwise return nil and p.New is non-nil, Get returns
 // the result of calling p.New.
-func (p *Pool) Get() interface{} {
+func (p *Pool) Get() (x interface{}) {
 	if race.Enabled {
 		race.Disable()
 	}
 	l := p.pin()
-	x := l.private
-	l.private = nil
-	runtime_procUnpin()
-	if x == nil {
-		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
-		}
-		l.Unlock()
-		if x == nil {
-			x = p.getSlow()
-		}
+	last := len(l.private) - 1
+	if last >= 0 {
+		x = l.private[last]
+		l.private = l.private[:last]
 	}
+	runtime_procUnpin()
 	if race.Enabled {
 		race.Enable()
 		if x != nil {
@@ -150,29 +131,7 @@ func (p *Pool) Get() interface{} {
 	if x == nil && p.New != nil {
 		x = p.New()
 	}
-	return x
-}
-
-func (p *Pool) getSlow() (x interface{}) {
-	// See the comment in pin regarding ordering of the loads.
-	size := atomic.LoadUintptr(&p.localSize) // load-acquire
-	local := p.local                         // load-consume
-	// Try to steal one element from other procs.
-	pid := runtime_procPin()
-	runtime_procUnpin()
-	for i := 0; i < int(size); i++ {
-		l := indexLocal(local, (pid+i+1)%int(size))
-		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
-			l.Unlock()
-			break
-		}
-		l.Unlock()
-	}
-	return x
+	return
 }
 
 // pin pins the current goroutine to P, disables preemption and returns poolLocal pool for the P.
@@ -226,11 +185,10 @@ func poolCleanup() {
 		allPools[i] = nil
 		for i := 0; i < int(p.localSize); i++ {
 			l := indexLocal(p.local, i)
-			l.private = nil
-			for j := range l.shared {
-				l.shared[j] = nil
+			for j := range l.private {
+				l.private[j] = nil
 			}
-			l.shared = nil
+			l.private = nil
 		}
 		p.local = nil
 		p.localSize = 0
