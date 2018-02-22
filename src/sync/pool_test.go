@@ -160,7 +160,7 @@ func BenchmarkPool(b *testing.B) {
 	})
 }
 
-func BenchmarkPoolOverflow(b *testing.B) {
+func BenchmarkPoolOverflow100(b *testing.B) {
 	var p Pool
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -170,6 +170,42 @@ func BenchmarkPoolOverflow(b *testing.B) {
 			for b := 0; b < 100; b++ {
 				p.Get()
 			}
+		}
+	})
+}
+
+func BenchmarkPoolOverflow1000(b *testing.B) {
+	var p Pool
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			for b := 0; b < 1000; b++ {
+				p.Put(1)
+			}
+			for b := 0; b < 1000; b++ {
+				p.Get()
+			}
+		}
+	})
+}
+
+func BenchmarkPoolUnderflowUnsteady(b *testing.B) {
+	var p Pool
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			p.Put(1)
+			p.Get()
+			p.Get()
+		}
+	})
+}
+
+func BenchmarkPoolOverflowUnsteady(b *testing.B) {
+	var p Pool
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			p.Put(1)
+			p.Put(1)
+			p.Get()
 		}
 	})
 }

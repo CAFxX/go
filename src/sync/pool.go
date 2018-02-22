@@ -47,11 +47,25 @@ type Pool struct {
 	local     unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal
 	localSize uintptr        // size of the local array
 
+	globalLock uintptr
+	global     []interface{}
+
 	// New optionally specifies a function to generate
 	// a value when Get would otherwise return nil.
 	// It may not be changed concurrently with calls to Get.
 	New func() interface{}
 }
+
+const (
+	globalLocked   uintptr = 1
+	globalUnlocked uintptr = 0
+
+	// privateSoftLimit is the threshold for starting to spill elements from the
+	// per-P private pools to the global pool
+	// TODO: privateSoftLimit should probably be proportional to the number of
+	//       Ps to avoid globalLock contention with high P counts
+	privateSoftLimit int = 250
+)
 
 // Local per-P Pool appendix.
 type poolLocalInternal struct {
@@ -97,6 +111,14 @@ func (p *Pool) Put(x interface{}) {
 	}
 	l := p.pin()
 	l.private = append(l.private, x)
+	if len(l.private) > privateSoftLimit {
+		if atomic.CompareAndSwapUintptr(&p.globalLock, globalUnlocked, globalLocked) {
+			p.global = append(p.global, l.private[privateSoftLimit/2:]...)
+			l.private = l.private[:privateSoftLimit/2]
+			atomic.StoreUintptr(&p.globalLock, globalUnlocked)
+			// we need to be pinned at least until the atomic store
+		}
+	}
 	runtime_procUnpin()
 	if race.Enabled {
 		race.Enable()
@@ -120,6 +142,20 @@ func (p *Pool) Get() (x interface{}) {
 	if last >= 0 {
 		x = l.private[last]
 		l.private = l.private[:last]
+	} else {
+		if atomic.CompareAndSwapUintptr(&p.globalLock, globalUnlocked, globalLocked) {
+			if len(p.global) > 0 {
+				last := 0
+				if len(p.global) > privateSoftLimit/2 {
+					last = len(p.global) - privateSoftLimit/2
+				}
+				l.private = append(l.private, p.global[last+1:]...)
+				x = p.global[last]
+				p.global = p.global[:last]
+			}
+			atomic.StoreUintptr(&p.globalLock, globalUnlocked)
+			// we need to be pinned at least until the atomic store
+		}
 	}
 	runtime_procUnpin()
 	if race.Enabled {
@@ -190,6 +226,10 @@ func poolCleanup() {
 			}
 			l.private = nil
 		}
+		for j := range p.global {
+			p.global[j] = nil
+		}
+		p.global = nil
 		p.local = nil
 		p.localSize = 0
 	}
