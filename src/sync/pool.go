@@ -119,14 +119,15 @@ func (p *Pool) Put(x interface{}) {
 		l = p.pinSlow()
 	}
 
-	l.private = append(l.private, x)
-	if len(l.private) > privateSoftLimit {
-		if atomic.CompareAndSwapUintptr(&p.globalLock, globalUnlocked, globalLocked) {
-			p.global = append(p.global, l.private[privateSoftLimit/2:]...)
-			l.private = l.private[:privateSoftLimit/2]
-			atomic.StoreUintptr(&p.globalLock, globalUnlocked)
-			// we need to be pinned at least until the atomic store
-		}
+	if len(l.private) >= privateSoftLimit &&
+		atomic.CompareAndSwapUintptr(&p.globalLock, globalUnlocked, globalLocked) {
+		last := privateSoftLimit / 2
+		p.global = append(append(p.global, l.private[last:]...), x)
+		l.private = l.private[:last]
+		atomic.StoreUintptr(&p.globalLock, globalUnlocked)
+		// We need to be pinned at least until after this atomic store
+	} else {
+		l.private = append(l.private, x)
 	}
 
 	runtime_procUnpin()
@@ -161,20 +162,18 @@ func (p *Pool) Get() (x interface{}) {
 	if last >= 0 {
 		x = l.private[last]
 		l.private = l.private[:last]
-	} else {
-		if atomic.CompareAndSwapUintptr(&p.globalLock, globalUnlocked, globalLocked) {
-			if len(p.global) > 0 {
-				last := 0
-				if len(p.global) > privateSoftLimit/2 {
-					last = len(p.global) - privateSoftLimit/2
-				}
-				l.private = append(l.private, p.global[last+1:]...)
-				x = p.global[last]
-				p.global = p.global[:last]
+	} else if atomic.CompareAndSwapUintptr(&p.globalLock, globalUnlocked, globalLocked) {
+		if len(p.global) > 0 {
+			last := 0
+			if len(p.global) > privateSoftLimit/2 {
+				last = len(p.global) - privateSoftLimit/2
 			}
-			atomic.StoreUintptr(&p.globalLock, globalUnlocked)
-			// we need to be pinned at least until the atomic store
+			l.private = append(l.private, p.global[last+1:]...)
+			x = p.global[last]
+			p.global = p.global[:last]
 		}
+		atomic.StoreUintptr(&p.globalLock, globalUnlocked)
+		// We need to be pinned at least until after this atomic store
 	}
 
 	runtime_procUnpin()
