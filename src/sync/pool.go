@@ -101,6 +101,7 @@ func (p *Pool) Put(x interface{}) {
 	if x == nil {
 		return
 	}
+
 	if race.Enabled {
 		if fastrand()%4 == 0 {
 			// Randomly drop x on floor.
@@ -127,7 +128,9 @@ func (p *Pool) Put(x interface{}) {
 			// we need to be pinned at least until the atomic store
 		}
 	}
+
 	runtime_procUnpin()
+
 	if race.Enabled {
 		race.Enable()
 	}
@@ -173,13 +176,16 @@ func (p *Pool) Get() (x interface{}) {
 			// we need to be pinned at least until the atomic store
 		}
 	}
+
 	runtime_procUnpin()
+
 	if race.Enabled {
 		race.Enable()
 		if x != nil {
 			race.Acquire(poolRaceAddr(x))
 		}
 	}
+
 	if x == nil && p.New != nil {
 		x = p.New()
 	}
