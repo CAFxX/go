@@ -109,7 +109,15 @@ func (p *Pool) Put(x interface{}) {
 		race.ReleaseMerge(poolRaceAddr(x))
 		race.Disable()
 	}
-	l := p.pin()
+
+	var l *poolLocal
+	pid := runtime_procPin()
+	if uintptr(pid) < atomic.LoadUintptr(&p.localSize) {
+		l = indexLocal(p.local, pid)
+	} else {
+		l = p.pinSlow()
+	}
+
 	l.private = append(l.private, x)
 	if len(l.private) > privateSoftLimit {
 		if atomic.CompareAndSwapUintptr(&p.globalLock, globalUnlocked, globalLocked) {
@@ -137,7 +145,15 @@ func (p *Pool) Get() (x interface{}) {
 	if race.Enabled {
 		race.Disable()
 	}
-	l := p.pin()
+
+	var l *poolLocal
+	pid := runtime_procPin()
+	if uintptr(pid) < atomic.LoadUintptr(&p.localSize) {
+		l = indexLocal(p.local, pid)
+	} else {
+		l = p.pinSlow()
+	}
+
 	last := len(l.private) - 1
 	if last >= 0 {
 		x = l.private[last]
@@ -168,22 +184,6 @@ func (p *Pool) Get() (x interface{}) {
 		x = p.New()
 	}
 	return
-}
-
-// pin pins the current goroutine to P, disables preemption and returns poolLocal pool for the P.
-// Caller must call runtime_procUnpin() when done with the pool.
-func (p *Pool) pin() *poolLocal {
-	pid := runtime_procPin()
-	// In pinSlow we store to localSize and then to local, here we load in opposite order.
-	// Since we've disabled preemption, GC cannot happen in between.
-	// Thus here we must observe local at least as large localSize.
-	// We can observe a newer/larger local, it is fine (we must observe its zero-initialized-ness).
-	s := atomic.LoadUintptr(&p.localSize) // load-acquire
-	l := p.local                          // load-consume
-	if uintptr(pid) < s {
-		return indexLocal(l, pid)
-	}
-	return p.pinSlow()
 }
 
 func (p *Pool) pinSlow() *poolLocal {
