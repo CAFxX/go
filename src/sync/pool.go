@@ -124,8 +124,8 @@ func (p *Pool) Put(x interface{}) {
 		last := privateSoftLimit / 2
 		p.global = append(append(p.global, l.private[last:]...), x)
 		l.private = l.private[:last]
-		atomic.StoreUintptr(&p.globalLock, globalUnlocked)
 		// We need to be pinned at least until after this atomic store
+		atomic.StoreUintptr(&p.globalLock, globalUnlocked)
 	} else {
 		l.private = append(l.private, x)
 	}
@@ -172,8 +172,8 @@ func (p *Pool) Get() (x interface{}) {
 			x = p.global[last]
 			p.global = p.global[:last]
 		}
-		atomic.StoreUintptr(&p.globalLock, globalUnlocked)
 		// We need to be pinned at least until after this atomic store
+		atomic.StoreUintptr(&p.globalLock, globalUnlocked)
 	}
 
 	runtime_procUnpin()
@@ -218,21 +218,16 @@ func (p *Pool) pinSlow() *poolLocal {
 func poolCleanup() {
 	// This function is called with the world stopped, at the beginning of a garbage collection.
 	// It must not allocate and probably should not call any runtime functions.
-	// Defensively zero out everything, 2 reasons:
-	// 1. To prevent false retention of whole Pools.
-	// 2. If GC happens while a goroutine works with l.shared in Put/Get,
-	//    it will retain whole Pool. So next cycle memory consumption would be doubled.
+	// Zero out all fields so that everything, including the backing slices, can be collected
+	// and that therefore we start from scratch after GC.
+	// Note that poolCleanup won't be called when a G is pinned to a P (see comment in pinSlow)
+	// so we don't need to clean the contents of the backing slices before dropping them
+	// (because all operations on l.private and p.global in Put/Get are done while pinned).
 	for i, p := range allPools {
 		allPools[i] = nil
 		for i := 0; i < int(p.localSize); i++ {
 			l := indexLocal(p.local, i)
-			for j := range l.private {
-				l.private[j] = nil
-			}
 			l.private = nil
-		}
-		for j := range p.global {
-			p.global[j] = nil
 		}
 		p.global = nil
 		p.local = nil
