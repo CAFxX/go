@@ -455,74 +455,23 @@ func HasSuffix(s, suffix string) bool {
 // according to the mapping function. If mapping returns a negative value, the character is
 // dropped from the string with no replacement.
 func Map(mapping func(rune) rune, s string) string {
-	// In the worst case, the string can grow when mapped, making
-	// things unpleasant. But it's so rare we barge in assuming it's
-	// fine. It could also shrink but that falls out naturally.
-
-	// The output buffer b is initialized on demand, the first
-	// time a character differs.
-	var b []byte
-	// nbytes is the number of bytes encoded in b.
-	var nbytes int
-
-	for i, c := range s {
-		r := mapping(c)
-		if r == c {
+	b := &Builder{}
+	b.Grow(len(s))
+	modified := false
+	for _, r := range s {
+		m := mapping(r)
+		if m < 0 {
 			continue
 		}
-
-		b = make([]byte, len(s)+utf8.UTFMax)
-		nbytes = copy(b, s[:i])
-		if r >= 0 {
-			if r <= utf8.RuneSelf {
-				b[nbytes] = byte(r)
-				nbytes++
-			} else {
-				nbytes += utf8.EncodeRune(b[nbytes:], r)
-			}
+		if m != r {
+			modified = true
 		}
-
-		if c == utf8.RuneError {
-			// RuneError is the result of either decoding
-			// an invalid sequence or '\uFFFD'. Determine
-			// the correct number of bytes we need to advance.
-			_, w := utf8.DecodeRuneInString(s[i:])
-			i += w
-		} else {
-			i += utf8.RuneLen(c)
-		}
-
-		s = s[i:]
-		break
+		b.WriteRune(m)
 	}
-
-	if b == nil {
+	if !modified && len(s) == b.Len() {
 		return s
 	}
-
-	for _, c := range s {
-		r := mapping(c)
-
-		// common case
-		if (0 <= r && r <= utf8.RuneSelf) && nbytes < len(b) {
-			b[nbytes] = byte(r)
-			nbytes++
-			continue
-		}
-
-		// b is not big enough or r is not a ASCII rune.
-		if r >= 0 {
-			if nbytes+utf8.UTFMax >= len(b) {
-				// Grow the buffer.
-				nb := make([]byte, 2*len(b))
-				copy(nb, b[:nbytes])
-				b = nb
-			}
-			nbytes += utf8.EncodeRune(b[nbytes:], r)
-		}
-	}
-
-	return string(b[:nbytes])
+	return b.String()
 }
 
 // Repeat returns a new string consisting of count copies of the string s.
