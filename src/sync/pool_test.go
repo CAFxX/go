@@ -29,11 +29,11 @@ func TestPool(t *testing.T) {
 	Runtime_procPin()
 	p.Put("a")
 	p.Put("b")
-	if g := p.Get(); g != "a" {
-		t.Fatalf("got %#v; want a", g)
-	}
 	if g := p.Get(); g != "b" {
 		t.Fatalf("got %#v; want b", g)
+	}
+	if g := p.Get(); g != "a" {
+		t.Fatalf("got %#v; want a", g)
 	}
 	if g := p.Get(); g != nil {
 		t.Fatalf("got %#v; want nil", g)
@@ -170,6 +170,28 @@ func BenchmarkPoolOverflow(b *testing.B) {
 			for b := 0; b < 100; b++ {
 				p.Get()
 			}
+		}
+	})
+}
+
+func BenchmarkPoolUnderflowUnbalanced(b *testing.B) {
+	var p Pool
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			p.Put(1)
+			p.Get()
+			p.Get()
+		}
+	})
+}
+
+func BenchmarkPoolOverflowUnbalanced(b *testing.B) {
+	var p Pool
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			p.Put(1)
+			p.Put(1)
+			p.Get()
 		}
 	})
 }

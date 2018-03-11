@@ -47,25 +47,40 @@ type Pool struct {
 	local     unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal
 	localSize uintptr        // size of the local array
 
+	globalLock  uintptr    // mutex for access to global/globalEmpty
+	global      *poolShard // global pool of full shards (elems==shardSize)
+	globalEmpty *poolShard // global pool of empty shards (elems==0)
+
 	// New optionally specifies a function to generate
 	// a value when Get would otherwise return nil.
 	// It may not be changed concurrently with calls to Get.
 	New func() interface{}
 }
 
-// Local per-P Pool appendix.
-type poolLocalInternal struct {
-	private interface{}   // Can be used only by the respective P.
-	shared  []interface{} // Can be used by any P.
-	Mutex                 // Protects shared.
+const (
+	globalLocked   uintptr = 1
+	globalUnlocked         = 0
+
+	shardSize = 32 // number of elements per shard
+)
+
+type poolShardInternal struct {
+	next  *poolShard
+	elems int
+	elem  [shardSize]interface{}
 }
 
-type poolLocal struct {
-	poolLocalInternal
+type poolShard struct {
+	poolShardInternal
 
 	// Prevents false sharing on widespread platforms with
-	// 128 mod (cache line size) = 0 .
-	pad [128 - unsafe.Sizeof(poolLocalInternal{})%128]byte
+	// 128 mod (cache line size) = 0.
+	_ [128 - unsafe.Sizeof(poolShardInternal{})%128]byte
+}
+
+// Local per-P Pool appendix.
+type poolLocal struct {
+	private poolShard
 }
 
 // from runtime
@@ -89,6 +104,7 @@ func (p *Pool) Put(x interface{}) {
 	if x == nil {
 		return
 	}
+
 	if race.Enabled {
 		if fastrand()%4 == 0 {
 			// Randomly drop x on floor.
@@ -97,17 +113,45 @@ func (p *Pool) Put(x interface{}) {
 		race.ReleaseMerge(poolRaceAddr(x))
 		race.Disable()
 	}
+
 	l := p.pin()
-	if l.private == nil {
-		l.private = x
-		x = nil
+	if l.private.elems < shardSize {
+		l.private.elem[l.private.elems] = x
+		l.private.elems++
+	} else if next := l.private.next; next != nil && next.elems < shardSize {
+		next.elem[next.elems] = x
+		next.elems++
+	} else if p.globalLockIfUnlocked() {
+		// There is no space in the private pool but we were able to acquire
+		// the globalLock, so we can try to move shards to/from the global pools.
+		if l.private.next != nil {
+			// The l.private.next shard is full: move it to the global pool.
+			full := l.private.next
+			l.private.next = nil
+			full.next = p.global
+			p.global = full
+		}
+		if p.globalEmpty != nil {
+			// Grab a reusable empty shard from the globalEmpty pool and move it
+			// to the private pool.
+			empty := p.globalEmpty
+			p.globalEmpty = empty.next
+			empty.next = nil
+			l.private.next = empty
+			p.globalUnlock()
+		} else {
+			// The globalEmpty pool contains no reusable shards: allocate a new
+			// empty shard.
+			p.globalUnlock()
+			l.private.next = &poolShard{}
+		}
+		l.private.next.elem[0] = x
+		l.private.next.elems = 1
+	} else {
+		// We could not acquire the globalLock to recycle x: drop it on the floor.
 	}
 	runtime_procUnpin()
-	if x != nil {
-		l.Lock()
-		l.shared = append(l.shared, x)
-		l.Unlock()
-	}
+
 	if race.Enabled {
 		race.Enable()
 	}
@@ -125,52 +169,52 @@ func (p *Pool) Get() interface{} {
 	if race.Enabled {
 		race.Disable()
 	}
+
 	l := p.pin()
-	x := l.private
-	l.private = nil
-	runtime_procUnpin()
-	if x == nil {
-		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
+	var x interface{}
+	if l.private.elems > 0 {
+		l.private.elems--
+		x = l.private.elem[l.private.elems]
+	} else if next := l.private.next; next != nil && next.elems > 0 {
+		next.elems--
+		x = next.elem[next.elems]
+	} else if p.globalLockIfUnlocked() {
+		// The private pool is empty but we were able to acquire the globalLock,
+		// so we can try to move shards to/from the global pools.
+		if l.private.next != nil {
+			// The l.private.next shard is empty: move it to the globalFree pool.
+			empty := l.private.next
+			l.private.next = nil
+			empty.next = p.globalEmpty
+			p.globalEmpty = empty
 		}
-		l.Unlock()
-		if x == nil {
-			x = p.getSlow()
+		if p.global != nil {
+			// Grab one full shard from the global pool and move it to the private
+			// pool.
+			full := p.global
+			p.global = full.next
+			full.next = nil
+			l.private.next = full
+			if full.elems > 0 {
+				full.elems--
+				x = full.elem[full.elems]
+			}
 		}
+		p.globalUnlock()
+	} else {
+		// The local pool was empty and we could not acquire the globalLock.
 	}
+	runtime_procUnpin()
+
 	if race.Enabled {
 		race.Enable()
 		if x != nil {
 			race.Acquire(poolRaceAddr(x))
 		}
 	}
+
 	if x == nil && p.New != nil {
 		x = p.New()
-	}
-	return x
-}
-
-func (p *Pool) getSlow() (x interface{}) {
-	// See the comment in pin regarding ordering of the loads.
-	size := atomic.LoadUintptr(&p.localSize) // load-acquire
-	local := p.local                         // load-consume
-	// Try to steal one element from other procs.
-	pid := runtime_procPin()
-	runtime_procUnpin()
-	for i := 0; i < int(size); i++ {
-		l := indexLocal(local, (pid+i+1)%int(size))
-		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
-			l.Unlock()
-			break
-		}
-		l.Unlock()
 	}
 	return x
 }
@@ -215,23 +259,48 @@ func (p *Pool) pinSlow() *poolLocal {
 	return &local[pid]
 }
 
+// globalLockIfUnlocked attempts to lock the globalLock. If the globalLock is
+// already locked it returns false. Otherwise it locks it and returns true.
+// This function is very similar to try_lock in POSIX, and it is equivalent
+// to the uncontended fast path of Mutex.Lock. If this function returns true
+// the caller has to call p.globalUnlock() to unlock the globalLock.
+func (p *Pool) globalLockIfUnlocked() bool {
+	if atomic.CompareAndSwapUintptr(&p.globalLock, globalUnlocked, globalLocked) {
+		if race.Enabled {
+			race.Acquire(unsafe.Pointer(p))
+		}
+		return true
+	}
+	return false
+}
+
+// globalUnlcok unlocks the globalLock. Calling this function should be done
+// only if the last call to p.globalLockIfUnlocked() returned true: its behavior
+// is otherwise undefined.
+func (p *Pool) globalUnlock() {
+	if race.Enabled {
+		_, _ = p.global, p.globalEmpty
+		race.Release(unsafe.Pointer(p))
+	}
+	atomic.StoreUintptr(&p.globalLock, globalUnlocked)
+}
+
 func poolCleanup() {
 	// This function is called with the world stopped, at the beginning of a garbage collection.
 	// It must not allocate and probably should not call any runtime functions.
-	// Defensively zero out everything, 2 reasons:
-	// 1. To prevent false retention of whole Pools.
-	// 2. If GC happens while a goroutine works with l.shared in Put/Get,
-	//    it will retain whole Pool. So next cycle memory consumption would be doubled.
+	// Defensively zero out everything to prevent false retention of whole Pools.
 	for i, p := range allPools {
 		allPools[i] = nil
 		for i := 0; i < int(p.localSize); i++ {
 			l := indexLocal(p.local, i)
-			l.private = nil
-			for j := range l.shared {
-				l.shared[j] = nil
+			for j := range l.private.elem {
+				l.private.elem[j] = nil
 			}
-			l.shared = nil
+			l.private.elems = 0
+			l.private.next = nil
 		}
+		p.global = nil
+		p.globalEmpty = nil
 		p.local = nil
 		p.localSize = 0
 	}
