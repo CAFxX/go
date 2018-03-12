@@ -47,8 +47,8 @@ type Pool struct {
 	local     unsafe.Pointer // local fixed-size per-P pool, actual type is [P]poolLocal
 	localSize uintptr        // size of the local array
 
-	globalLock  uintptr    // mutex for access to global/globalEmpty
-	global      *poolShard // global pool of full shards (elems==shardSize)
+	globalLock  uintptr    // mutex for access to globalFull/globalEmpty
+	globalFull  *poolShard // global pool of full shards (elems==shardSize)
 	globalEmpty *poolShard // global pool of empty shards (elems==0)
 
 	// New optionally specifies a function to generate
@@ -119,30 +119,28 @@ func (p *Pool) Put(x interface{}) {
 		l.elem[l.elems] = x
 		l.elems++
 	} else if l.next != nil && l.next.elems < shardSize {
-		l.next.elem[next.elems] = x
+		l.next.elem[l.next.elems] = x
 		l.next.elems++
-	} else if p.globalLockIfUnlocked() {
+	} else if p.globalTryLock() {
 		// There is no space in the private pool but we were able to acquire
 		// the globalLock, so we can try to move shards to/from the global pools.
-		if l.next != nil {
-			// The l.next shard is full: move it to the global pool.
-			full := l.next
+		if full := l.next; full != nil {
+			// The l.next shard is full: move it to the globalFull pool.
 			l.next = nil
-			full.next = p.global
-			p.global = full
+			full.next = p.globalFull
+			p.globalFull = full
 		}
-		if p.globalEmpty != nil {
+		if empty := p.globalEmpty; empty != nil {
 			// Grab a reusable empty shard from the globalEmpty pool and move it
 			// to the private pool.
-			empty := p.globalEmpty
 			p.globalEmpty = empty.next
 			empty.next = nil
 			l.next = empty
-			p.globalUnlock()
-		} else {
-			// The globalEmpty pool contains no reusable shards: allocate a new
-			// empty shard.
-			p.globalUnlock()
+		}
+		p.globalUnlock()
+		if l.next == nil {
+			// The globalEmpty pool did not contain any reusable shards: allocate
+			// a new empty shard.
 			l.next = &poolShard{}
 		}
 		l.next.elem[0] = x
@@ -178,27 +176,23 @@ func (p *Pool) Get() interface{} {
 	} else if l.next != nil && l.next.elems > 0 {
 		l.next.elems--
 		x = l.next.elem[l.next.elems]
-	} else if p.globalLockIfUnlocked() {
+	} else if p.globalTryLock() {
 		// The private pool is empty but we were able to acquire the globalLock,
 		// so we can try to move shards to/from the global pools.
-		if l.next != nil {
+		if empty := l.next; empty != nil {
 			// The l.next shard is empty: move it to the globalFree pool.
-			empty := l.next
 			l.next = nil
 			empty.next = p.globalEmpty
 			p.globalEmpty = empty
 		}
-		if p.global != nil {
-			// Grab one full shard from the global pool and move it to the private
-			// pool.
-			full := p.global
-			p.global = full.next
+		if full := p.globalFull; full != nil {
+			// Grab one full shard from the globalFull pool and move it to the
+			// private pool.
+			p.globalFull = full.next
 			full.next = nil
 			l.next = full
-			if full.elems > 0 {
-				full.elems--
-				x = full.elem[full.elems]
-			}
+			full.elems--
+			x = full.elem[full.elems]
 		}
 		p.globalUnlock()
 	} else {
@@ -259,12 +253,12 @@ func (p *Pool) pinSlow() *poolLocal {
 	return &local[pid]
 }
 
-// globalLockIfUnlocked attempts to lock the globalLock. If the globalLock is
-// already locked it returns false. Otherwise it locks it and returns true.
+// globalTryLock attempts to lock the globalLock. If the globalLock is already
+// locked it returns false. Otherwise it locks it and returns true.
 // This function is very similar to try_lock in POSIX, and it is equivalent
 // to the uncontended fast path of Mutex.Lock. If this function returns true
 // the caller has to call p.globalUnlock() to unlock the globalLock.
-func (p *Pool) globalLockIfUnlocked() bool {
+func (p *Pool) globalTryLock() bool {
 	if atomic.CompareAndSwapUintptr(&p.globalLock, globalUnlocked, globalLocked) {
 		if race.Enabled {
 			race.Acquire(unsafe.Pointer(p))
@@ -274,12 +268,12 @@ func (p *Pool) globalLockIfUnlocked() bool {
 	return false
 }
 
-// globalUnlcok unlocks the globalLock. Calling this function should be done
-// only if the last call to p.globalLockIfUnlocked() returned true: its behavior
-// is otherwise undefined.
+// globalUnlock unlocks the globalLock. Calling this function should be done
+// only if the last call to p.globalTryLock() returned true: its behavior is
+// otherwise undefined.
 func (p *Pool) globalUnlock() {
 	if race.Enabled {
-		_, _ = p.global, p.globalEmpty
+		_, _ = p.globalFull, p.globalEmpty
 		race.Release(unsafe.Pointer(p))
 	}
 	atomic.StoreUintptr(&p.globalLock, globalUnlocked)
@@ -306,14 +300,14 @@ func poolCleanup() {
 			l.next.elems = 0
 			l.next = nil
 		}
-		for s := p.global; s != nil; {
+		for s := p.globalFull; s != nil; {
 			for j := range s.elem {
 				s.elem[j] = nil
 			}
 			s.elems = 0
 			s, s.next = s.next, nil
 		}
-		p.global = nil
+		p.globalFull = nil
 		for s := p.globalEmpty; s != nil; {
 			for j := range s.elem {
 				s.elem[j] = nil
