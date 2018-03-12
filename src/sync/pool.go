@@ -80,7 +80,7 @@ type poolShard struct {
 
 // Local per-P Pool appendix.
 type poolLocal struct {
-	private poolShard
+	poolShard
 }
 
 // from runtime
@@ -115,19 +115,19 @@ func (p *Pool) Put(x interface{}) {
 	}
 
 	l := p.pin()
-	if l.private.elems < shardSize {
-		l.private.elem[l.private.elems] = x
-		l.private.elems++
-	} else if next := l.private.next; next != nil && next.elems < shardSize {
-		next.elem[next.elems] = x
-		next.elems++
+	if l.elems < shardSize {
+		l.elem[l.elems] = x
+		l.elems++
+	} else if l.next != nil && l.next.elems < shardSize {
+		l.next.elem[next.elems] = x
+		l.next.elems++
 	} else if p.globalLockIfUnlocked() {
 		// There is no space in the private pool but we were able to acquire
 		// the globalLock, so we can try to move shards to/from the global pools.
-		if l.private.next != nil {
-			// The l.private.next shard is full: move it to the global pool.
-			full := l.private.next
-			l.private.next = nil
+		if l.next != nil {
+			// The l.next shard is full: move it to the global pool.
+			full := l.next
+			l.next = nil
 			full.next = p.global
 			p.global = full
 		}
@@ -137,16 +137,16 @@ func (p *Pool) Put(x interface{}) {
 			empty := p.globalEmpty
 			p.globalEmpty = empty.next
 			empty.next = nil
-			l.private.next = empty
+			l.next = empty
 			p.globalUnlock()
 		} else {
 			// The globalEmpty pool contains no reusable shards: allocate a new
 			// empty shard.
 			p.globalUnlock()
-			l.private.next = &poolShard{}
+			l.next = &poolShard{}
 		}
-		l.private.next.elem[0] = x
-		l.private.next.elems = 1
+		l.next.elem[0] = x
+		l.next.elems = 1
 	} else {
 		// We could not acquire the globalLock to recycle x: drop it on the floor.
 	}
@@ -172,19 +172,19 @@ func (p *Pool) Get() interface{} {
 
 	l := p.pin()
 	var x interface{}
-	if l.private.elems > 0 {
-		l.private.elems--
-		x = l.private.elem[l.private.elems]
-	} else if next := l.private.next; next != nil && next.elems > 0 {
-		next.elems--
-		x = next.elem[next.elems]
+	if l.elems > 0 {
+		l.elems--
+		x = l.elem[l.elems]
+	} else if l.next != nil && l.next.elems > 0 {
+		l.next.elems--
+		x = l.next.elem[l.next.elems]
 	} else if p.globalLockIfUnlocked() {
 		// The private pool is empty but we were able to acquire the globalLock,
 		// so we can try to move shards to/from the global pools.
-		if l.private.next != nil {
-			// The l.private.next shard is empty: move it to the globalFree pool.
-			empty := l.private.next
-			l.private.next = nil
+		if l.next != nil {
+			// The l.next shard is empty: move it to the globalFree pool.
+			empty := l.next
+			l.next = nil
 			empty.next = p.globalEmpty
 			p.globalEmpty = empty
 		}
@@ -194,7 +194,7 @@ func (p *Pool) Get() interface{} {
 			full := p.global
 			p.global = full.next
 			full.next = nil
-			l.private.next = full
+			l.next = full
 			if full.elems > 0 {
 				full.elems--
 				x = full.elem[full.elems]
@@ -293,18 +293,18 @@ func poolCleanup() {
 		allPools[i] = nil
 		for i := 0; i < int(p.localSize); i++ {
 			l := indexLocal(p.local, i)
-			for j := range l.private.elem {
-				l.private.elem[j] = nil
+			for j := range l.elem {
+				l.elem[j] = nil
 			}
-			l.private.elems = 0
-			if l.private.next == nil {
+			l.elems = 0
+			if l.next == nil {
 				continue
 			}
-			for j := range l.private.next.elem {
-				l.private.next.elem[j] = nil
+			for j := range l.next.elem {
+				l.next.elem[j] = nil
 			}
-			l.private.next.elems = 0
-			l.private.next = nil
+			l.next.elems = 0
+			l.next = nil
 		}
 		for s := p.global; s != nil; {
 			for j := range s.elem {
