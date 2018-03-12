@@ -74,8 +74,9 @@ type poolShard struct {
 	poolShardInternal
 
 	// Prevents false sharing on widespread platforms with
-	// 128 mod (cache line size) = 0.
-	_ [128 - unsafe.Sizeof(poolShardInternal{})%128]byte
+	// 128 mod (cache line size) = 0. The last %128 is required to avoid
+	// adding 128 bytes of padding if sizeof(poolShardInternal)%128 == 0.
+	_ [(128 - unsafe.Sizeof(poolShardInternal{})%128) % 128]byte
 }
 
 // Local per-P Pool appendix.
