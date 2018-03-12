@@ -297,9 +297,30 @@ func poolCleanup() {
 				l.private.elem[j] = nil
 			}
 			l.private.elems = 0
+			if l.private.next == nil {
+				continue
+			}
+			for j := range l.private.next.elem {
+				l.private.next.elem[j] = nil
+			}
+			l.private.next.elems = 0
 			l.private.next = nil
 		}
+		for s := p.global; s != nil; {
+			for j := range s.elem {
+				s.elem[j] = nil
+			}
+			s.elems = 0
+			s, s.next = s.next, nil
+		}
 		p.global = nil
+		for s := p.globalEmpty; s != nil; {
+			for j := range s.elem {
+				s.elem[j] = nil
+			}
+			s.elems = 0
+			s, s.next = s.next, nil
+		}
 		p.globalEmpty = nil
 		p.local = nil
 		p.localSize = 0
