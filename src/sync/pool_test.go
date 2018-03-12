@@ -8,6 +8,7 @@
 package sync_test
 
 import (
+	"bytes"
 	"runtime"
 	"runtime/debug"
 	. "sync"
@@ -192,6 +193,21 @@ func BenchmarkPoolOverflowUnbalanced(b *testing.B) {
 			p.Put(1)
 			p.Put(1)
 			p.Get()
+		}
+	})
+}
+
+func BenchmarkPoolManyGoroutines(b *testing.B) {
+	p := &Pool{
+		New: func() interface{} { return &bytes.Buffer{} },
+	}
+	b.SetParallelism(1000) // start 1000 goroutines per P.
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			v := p.Get()
+			// Emulate per-P goroutine switch as in the real http/rpc servers.
+			runtime.Gosched()
+			p.Put(v)
 		}
 	})
 }
