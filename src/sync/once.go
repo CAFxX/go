@@ -33,10 +33,14 @@ type Once struct {
 // without calling f.
 //
 func (o *Once) Do(f func()) {
-	if atomic.LoadUint32(&o.done) == 1 {
-		return
+	if atomic.LoadUint32(&o.done) == 0 {
+		// Slow-path in doSlow to allow mid-stack inlining to inline the fast-path
+		o.doSlow(f)
 	}
-	// Slow-path.
+}
+
+//go:noinline
+func (o *Once) doSlow(f func()) {
 	o.m.Lock()
 	defer o.m.Unlock()
 	if o.done == 0 {

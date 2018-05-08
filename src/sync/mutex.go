@@ -70,14 +70,19 @@ const (
 // If the lock is already in use, the calling goroutine
 // blocks until the mutex is available.
 func (m *Mutex) Lock() {
-	// Fast path: grab unlocked mutex.
-	if atomic.CompareAndSwapInt32(&m.state, 0, mutexLocked) {
-		if race.Enabled {
-			race.Acquire(unsafe.Pointer(m))
-		}
+	// Fast path: try to grab an unlocked mutex.
+	if atomic.CompareAndSwapInt32(&m.state, 0, mutexLocked) == false {
+		// Slow path in lockSlow() to allow mid-stack inlining to inline Lock()
+		m.lockSlow()
 		return
 	}
+	if race.Enabled {
+		race.Acquire(unsafe.Pointer(m))
+	}
+}
 
+//go:noinline
+func (m *Mutex) lockSlow() {
 	var waitStartTime int64
 	starving := false
 	awoke := false
@@ -178,8 +183,20 @@ func (m *Mutex) Unlock() {
 		race.Release(unsafe.Pointer(m))
 	}
 
-	// Fast path: drop lock bit.
+	// Fast path: drop lock bit and check that we don't need to wake up
+	// somebody else.
 	new := atomic.AddInt32(&m.state, -mutexLocked)
+	fast := new&^mutexWoken == 0 || new&(mutexLocked|mutexWoken|mutexStarving) == mutexWoken
+	if !fast {
+		m.unlockSlow(new)
+	}
+}
+
+// Slow path of Unlock(), split here to allow the fast path to be inlined.
+// Note that the conditions in Unlock() that allow to skip the slow path
+// must be kept in sync with the conditions in unlockSlow() that lead to the
+// no-op return (marked `// no-op`).
+func (m *Mutex) unlockSlow(new int32) {
 	if (new+mutexLocked)&mutexLocked == 0 {
 		throw("sync: unlock of unlocked mutex")
 	}
@@ -193,7 +210,7 @@ func (m *Mutex) Unlock() {
 			// since we did not observe mutexStarving when we unlocked the mutex above.
 			// So get off the way.
 			if old>>mutexWaiterShift == 0 || old&(mutexLocked|mutexWoken|mutexStarving) != 0 {
-				return
+				return // no-op
 			}
 			// Grab the right to wake someone.
 			new = (old - 1<<mutexWaiterShift) | mutexWoken
