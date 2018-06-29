@@ -1412,6 +1412,38 @@
 	&& clobber(s1) && clobber(s2) && clobber(s3)
 	-> (Move {t.(*types.Type).Elem()} [sz] dst src mem)
 
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 8
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq64 (Load <typ.UInt64> rstr mem) (Load <typ.UInt64> lstr mem)) mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 4
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq32 (Load <typ.UInt32> rstr mem) (Load <typ.UInt32> lstr mem)) mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 2
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq16 (Load <typ.UInt16> rstr mem) (Load <typ.UInt16> lstr mem)) mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 1
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq8 (Load <typ.UInt8> rstr mem) (Load <typ.UInt8> lstr mem)) mem)
+
 // De-virtualize interface calls into static calls.
 // Note that (ITab (IMake)) doesn't get
 // rewritten until after the first opt pass,

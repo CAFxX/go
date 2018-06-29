@@ -964,6 +964,31 @@ func isInlinableMemmove(dst, src *Value, sz int64, c *Config) bool {
 	return false
 }
 
+// isInlinableMemequal reports whether the given arch can load unaligned memory
+// of size sz and has compare instruction for that size.
+func isInlinableMemequal(sz int64, c *Config) bool {
+	switch sz {
+	case 8:
+		switch c.arch {
+		case "amd64", "amd64p32", "ppc64", "ppc64le", "arm64", "s390x", "wasm":
+			return true
+		default:
+			return false
+		}
+	case 2, 4:
+		switch c.arch {
+		case "amd64", "amd64p32", "386", "ppc64", "ppc64le", "arm64", "s390x", "wasm":
+			return true
+		default:
+			return false
+		}
+	case 1:
+		return true
+	default:
+		return false
+	}
+}
+
 // encodes the lsb and width for arm64 bitfield ops into the expected auxInt format.
 func arm64BFAuxInt(lsb, width int64) int64 {
 	if lsb < 0 || lsb > 63 {

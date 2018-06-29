@@ -412,7 +412,7 @@ func rewriteValuegeneric(v *Value) bool {
 	case OpSqrt:
 		return rewriteValuegeneric_OpSqrt_0(v)
 	case OpStaticCall:
-		return rewriteValuegeneric_OpStaticCall_0(v)
+		return rewriteValuegeneric_OpStaticCall_0(v) || rewriteValuegeneric_OpStaticCall_10(v)
 	case OpStore:
 		return rewriteValuegeneric_OpStore_0(v) || rewriteValuegeneric_OpStore_10(v) || rewriteValuegeneric_OpStore_20(v)
 	case OpStringLen:
@@ -27619,6 +27619,8 @@ func rewriteValuegeneric_OpStaticCall_0(v *Value) bool {
 	_ = b
 	config := b.Func.Config
 	_ = config
+	typ := &b.Func.Config.Types
+	_ = typ
 	// match: (StaticCall {sym} s1:(Store _ (Const64 [sz]) s2:(Store _ src s3:(Store {t} _ dst mem))))
 	// cond: isSameSym(sym,"runtime.memmove") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && isInlinableMemmove(dst,src,sz,config) && clobber(s1) && clobber(s2) && clobber(s3)
 	// result: (Move {t.(*types.Type).Elem()} [sz] dst src mem)
@@ -27699,6 +27701,417 @@ func rewriteValuegeneric_OpStaticCall_0(v *Value) bool {
 		v.AddArg(mem)
 		return true
 	}
+	// match: (StaticCall {sym} s1:(Store _ (Const64 [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+	// cond: isSameSym(sym,"runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 8 && isInlinableMemequal(sz,config) && clobber(s1) && clobber(s2) && clobber(s3)
+	// result: (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq64 (Load <typ.UInt64> rstr mem) (Load <typ.UInt64> lstr mem)) mem)
+	for {
+		sym := v.Aux
+		s1 := v.Args[0]
+		if s1.Op != OpStore {
+			break
+		}
+		_ = s1.Args[2]
+		s1_1 := s1.Args[1]
+		if s1_1.Op != OpConst64 {
+			break
+		}
+		sz := s1_1.AuxInt
+		s2 := s1.Args[2]
+		if s2.Op != OpStore {
+			break
+		}
+		_ = s2.Args[2]
+		rstr := s2.Args[1]
+		s3 := s2.Args[2]
+		if s3.Op != OpStore {
+			break
+		}
+		_ = s3.Args[2]
+		lstr := s3.Args[1]
+		mem := s3.Args[2]
+		if !(isSameSym(sym, "runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 8 && isInlinableMemequal(sz, config) && clobber(s1) && clobber(s2) && clobber(s3)) {
+			break
+		}
+		v.reset(OpStore)
+		v.Aux = typ.Bool
+		v0 := b.NewValue0(v.Pos, OpOffPtr, typ.BytePtr)
+		v0.AuxInt = config.ctxt.FixedFrameSize() + 3*config.RegSize
+		v1 := b.NewValue0(v.Pos, OpSP, typ.Uintptr)
+		v0.AddArg(v1)
+		v.AddArg(v0)
+		v2 := b.NewValue0(v.Pos, OpEq64, typ.Bool)
+		v3 := b.NewValue0(v.Pos, OpLoad, typ.UInt64)
+		v3.AddArg(rstr)
+		v3.AddArg(mem)
+		v2.AddArg(v3)
+		v4 := b.NewValue0(v.Pos, OpLoad, typ.UInt64)
+		v4.AddArg(lstr)
+		v4.AddArg(mem)
+		v2.AddArg(v4)
+		v.AddArg(v2)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (StaticCall {sym} s1:(Store _ (Const32 [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+	// cond: isSameSym(sym,"runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 8 && isInlinableMemequal(sz,config) && clobber(s1) && clobber(s2) && clobber(s3)
+	// result: (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq64 (Load <typ.UInt64> rstr mem) (Load <typ.UInt64> lstr mem)) mem)
+	for {
+		sym := v.Aux
+		s1 := v.Args[0]
+		if s1.Op != OpStore {
+			break
+		}
+		_ = s1.Args[2]
+		s1_1 := s1.Args[1]
+		if s1_1.Op != OpConst32 {
+			break
+		}
+		sz := s1_1.AuxInt
+		s2 := s1.Args[2]
+		if s2.Op != OpStore {
+			break
+		}
+		_ = s2.Args[2]
+		rstr := s2.Args[1]
+		s3 := s2.Args[2]
+		if s3.Op != OpStore {
+			break
+		}
+		_ = s3.Args[2]
+		lstr := s3.Args[1]
+		mem := s3.Args[2]
+		if !(isSameSym(sym, "runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 8 && isInlinableMemequal(sz, config) && clobber(s1) && clobber(s2) && clobber(s3)) {
+			break
+		}
+		v.reset(OpStore)
+		v.Aux = typ.Bool
+		v0 := b.NewValue0(v.Pos, OpOffPtr, typ.BytePtr)
+		v0.AuxInt = config.ctxt.FixedFrameSize() + 3*config.RegSize
+		v1 := b.NewValue0(v.Pos, OpSP, typ.Uintptr)
+		v0.AddArg(v1)
+		v.AddArg(v0)
+		v2 := b.NewValue0(v.Pos, OpEq64, typ.Bool)
+		v3 := b.NewValue0(v.Pos, OpLoad, typ.UInt64)
+		v3.AddArg(rstr)
+		v3.AddArg(mem)
+		v2.AddArg(v3)
+		v4 := b.NewValue0(v.Pos, OpLoad, typ.UInt64)
+		v4.AddArg(lstr)
+		v4.AddArg(mem)
+		v2.AddArg(v4)
+		v.AddArg(v2)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (StaticCall {sym} s1:(Store _ (Const64 [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+	// cond: isSameSym(sym,"runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 4 && isInlinableMemequal(sz,config) && clobber(s1) && clobber(s2) && clobber(s3)
+	// result: (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq32 (Load <typ.UInt32> rstr mem) (Load <typ.UInt32> lstr mem)) mem)
+	for {
+		sym := v.Aux
+		s1 := v.Args[0]
+		if s1.Op != OpStore {
+			break
+		}
+		_ = s1.Args[2]
+		s1_1 := s1.Args[1]
+		if s1_1.Op != OpConst64 {
+			break
+		}
+		sz := s1_1.AuxInt
+		s2 := s1.Args[2]
+		if s2.Op != OpStore {
+			break
+		}
+		_ = s2.Args[2]
+		rstr := s2.Args[1]
+		s3 := s2.Args[2]
+		if s3.Op != OpStore {
+			break
+		}
+		_ = s3.Args[2]
+		lstr := s3.Args[1]
+		mem := s3.Args[2]
+		if !(isSameSym(sym, "runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 4 && isInlinableMemequal(sz, config) && clobber(s1) && clobber(s2) && clobber(s3)) {
+			break
+		}
+		v.reset(OpStore)
+		v.Aux = typ.Bool
+		v0 := b.NewValue0(v.Pos, OpOffPtr, typ.BytePtr)
+		v0.AuxInt = config.ctxt.FixedFrameSize() + 3*config.RegSize
+		v1 := b.NewValue0(v.Pos, OpSP, typ.Uintptr)
+		v0.AddArg(v1)
+		v.AddArg(v0)
+		v2 := b.NewValue0(v.Pos, OpEq32, typ.Bool)
+		v3 := b.NewValue0(v.Pos, OpLoad, typ.UInt32)
+		v3.AddArg(rstr)
+		v3.AddArg(mem)
+		v2.AddArg(v3)
+		v4 := b.NewValue0(v.Pos, OpLoad, typ.UInt32)
+		v4.AddArg(lstr)
+		v4.AddArg(mem)
+		v2.AddArg(v4)
+		v.AddArg(v2)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (StaticCall {sym} s1:(Store _ (Const32 [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+	// cond: isSameSym(sym,"runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 4 && isInlinableMemequal(sz,config) && clobber(s1) && clobber(s2) && clobber(s3)
+	// result: (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq32 (Load <typ.UInt32> rstr mem) (Load <typ.UInt32> lstr mem)) mem)
+	for {
+		sym := v.Aux
+		s1 := v.Args[0]
+		if s1.Op != OpStore {
+			break
+		}
+		_ = s1.Args[2]
+		s1_1 := s1.Args[1]
+		if s1_1.Op != OpConst32 {
+			break
+		}
+		sz := s1_1.AuxInt
+		s2 := s1.Args[2]
+		if s2.Op != OpStore {
+			break
+		}
+		_ = s2.Args[2]
+		rstr := s2.Args[1]
+		s3 := s2.Args[2]
+		if s3.Op != OpStore {
+			break
+		}
+		_ = s3.Args[2]
+		lstr := s3.Args[1]
+		mem := s3.Args[2]
+		if !(isSameSym(sym, "runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 4 && isInlinableMemequal(sz, config) && clobber(s1) && clobber(s2) && clobber(s3)) {
+			break
+		}
+		v.reset(OpStore)
+		v.Aux = typ.Bool
+		v0 := b.NewValue0(v.Pos, OpOffPtr, typ.BytePtr)
+		v0.AuxInt = config.ctxt.FixedFrameSize() + 3*config.RegSize
+		v1 := b.NewValue0(v.Pos, OpSP, typ.Uintptr)
+		v0.AddArg(v1)
+		v.AddArg(v0)
+		v2 := b.NewValue0(v.Pos, OpEq32, typ.Bool)
+		v3 := b.NewValue0(v.Pos, OpLoad, typ.UInt32)
+		v3.AddArg(rstr)
+		v3.AddArg(mem)
+		v2.AddArg(v3)
+		v4 := b.NewValue0(v.Pos, OpLoad, typ.UInt32)
+		v4.AddArg(lstr)
+		v4.AddArg(mem)
+		v2.AddArg(v4)
+		v.AddArg(v2)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (StaticCall {sym} s1:(Store _ (Const64 [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+	// cond: isSameSym(sym,"runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 2 && isInlinableMemequal(sz,config) && clobber(s1) && clobber(s2) && clobber(s3)
+	// result: (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq16 (Load <typ.UInt16> rstr mem) (Load <typ.UInt16> lstr mem)) mem)
+	for {
+		sym := v.Aux
+		s1 := v.Args[0]
+		if s1.Op != OpStore {
+			break
+		}
+		_ = s1.Args[2]
+		s1_1 := s1.Args[1]
+		if s1_1.Op != OpConst64 {
+			break
+		}
+		sz := s1_1.AuxInt
+		s2 := s1.Args[2]
+		if s2.Op != OpStore {
+			break
+		}
+		_ = s2.Args[2]
+		rstr := s2.Args[1]
+		s3 := s2.Args[2]
+		if s3.Op != OpStore {
+			break
+		}
+		_ = s3.Args[2]
+		lstr := s3.Args[1]
+		mem := s3.Args[2]
+		if !(isSameSym(sym, "runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 2 && isInlinableMemequal(sz, config) && clobber(s1) && clobber(s2) && clobber(s3)) {
+			break
+		}
+		v.reset(OpStore)
+		v.Aux = typ.Bool
+		v0 := b.NewValue0(v.Pos, OpOffPtr, typ.BytePtr)
+		v0.AuxInt = config.ctxt.FixedFrameSize() + 3*config.RegSize
+		v1 := b.NewValue0(v.Pos, OpSP, typ.Uintptr)
+		v0.AddArg(v1)
+		v.AddArg(v0)
+		v2 := b.NewValue0(v.Pos, OpEq16, typ.Bool)
+		v3 := b.NewValue0(v.Pos, OpLoad, typ.UInt16)
+		v3.AddArg(rstr)
+		v3.AddArg(mem)
+		v2.AddArg(v3)
+		v4 := b.NewValue0(v.Pos, OpLoad, typ.UInt16)
+		v4.AddArg(lstr)
+		v4.AddArg(mem)
+		v2.AddArg(v4)
+		v.AddArg(v2)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (StaticCall {sym} s1:(Store _ (Const32 [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+	// cond: isSameSym(sym,"runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 2 && isInlinableMemequal(sz,config) && clobber(s1) && clobber(s2) && clobber(s3)
+	// result: (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq16 (Load <typ.UInt16> rstr mem) (Load <typ.UInt16> lstr mem)) mem)
+	for {
+		sym := v.Aux
+		s1 := v.Args[0]
+		if s1.Op != OpStore {
+			break
+		}
+		_ = s1.Args[2]
+		s1_1 := s1.Args[1]
+		if s1_1.Op != OpConst32 {
+			break
+		}
+		sz := s1_1.AuxInt
+		s2 := s1.Args[2]
+		if s2.Op != OpStore {
+			break
+		}
+		_ = s2.Args[2]
+		rstr := s2.Args[1]
+		s3 := s2.Args[2]
+		if s3.Op != OpStore {
+			break
+		}
+		_ = s3.Args[2]
+		lstr := s3.Args[1]
+		mem := s3.Args[2]
+		if !(isSameSym(sym, "runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 2 && isInlinableMemequal(sz, config) && clobber(s1) && clobber(s2) && clobber(s3)) {
+			break
+		}
+		v.reset(OpStore)
+		v.Aux = typ.Bool
+		v0 := b.NewValue0(v.Pos, OpOffPtr, typ.BytePtr)
+		v0.AuxInt = config.ctxt.FixedFrameSize() + 3*config.RegSize
+		v1 := b.NewValue0(v.Pos, OpSP, typ.Uintptr)
+		v0.AddArg(v1)
+		v.AddArg(v0)
+		v2 := b.NewValue0(v.Pos, OpEq16, typ.Bool)
+		v3 := b.NewValue0(v.Pos, OpLoad, typ.UInt16)
+		v3.AddArg(rstr)
+		v3.AddArg(mem)
+		v2.AddArg(v3)
+		v4 := b.NewValue0(v.Pos, OpLoad, typ.UInt16)
+		v4.AddArg(lstr)
+		v4.AddArg(mem)
+		v2.AddArg(v4)
+		v.AddArg(v2)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (StaticCall {sym} s1:(Store _ (Const64 [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+	// cond: isSameSym(sym,"runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 1 && isInlinableMemequal(sz,config) && clobber(s1) && clobber(s2) && clobber(s3)
+	// result: (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq8 (Load <typ.UInt8> rstr mem) (Load <typ.UInt8> lstr mem)) mem)
+	for {
+		sym := v.Aux
+		s1 := v.Args[0]
+		if s1.Op != OpStore {
+			break
+		}
+		_ = s1.Args[2]
+		s1_1 := s1.Args[1]
+		if s1_1.Op != OpConst64 {
+			break
+		}
+		sz := s1_1.AuxInt
+		s2 := s1.Args[2]
+		if s2.Op != OpStore {
+			break
+		}
+		_ = s2.Args[2]
+		rstr := s2.Args[1]
+		s3 := s2.Args[2]
+		if s3.Op != OpStore {
+			break
+		}
+		_ = s3.Args[2]
+		lstr := s3.Args[1]
+		mem := s3.Args[2]
+		if !(isSameSym(sym, "runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 1 && isInlinableMemequal(sz, config) && clobber(s1) && clobber(s2) && clobber(s3)) {
+			break
+		}
+		v.reset(OpStore)
+		v.Aux = typ.Bool
+		v0 := b.NewValue0(v.Pos, OpOffPtr, typ.BytePtr)
+		v0.AuxInt = config.ctxt.FixedFrameSize() + 3*config.RegSize
+		v1 := b.NewValue0(v.Pos, OpSP, typ.Uintptr)
+		v0.AddArg(v1)
+		v.AddArg(v0)
+		v2 := b.NewValue0(v.Pos, OpEq8, typ.Bool)
+		v3 := b.NewValue0(v.Pos, OpLoad, typ.UInt8)
+		v3.AddArg(rstr)
+		v3.AddArg(mem)
+		v2.AddArg(v3)
+		v4 := b.NewValue0(v.Pos, OpLoad, typ.UInt8)
+		v4.AddArg(lstr)
+		v4.AddArg(mem)
+		v2.AddArg(v4)
+		v.AddArg(v2)
+		v.AddArg(mem)
+		return true
+	}
+	// match: (StaticCall {sym} s1:(Store _ (Const32 [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+	// cond: isSameSym(sym,"runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 1 && isInlinableMemequal(sz,config) && clobber(s1) && clobber(s2) && clobber(s3)
+	// result: (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq8 (Load <typ.UInt8> rstr mem) (Load <typ.UInt8> lstr mem)) mem)
+	for {
+		sym := v.Aux
+		s1 := v.Args[0]
+		if s1.Op != OpStore {
+			break
+		}
+		_ = s1.Args[2]
+		s1_1 := s1.Args[1]
+		if s1_1.Op != OpConst32 {
+			break
+		}
+		sz := s1_1.AuxInt
+		s2 := s1.Args[2]
+		if s2.Op != OpStore {
+			break
+		}
+		_ = s2.Args[2]
+		rstr := s2.Args[1]
+		s3 := s2.Args[2]
+		if s3.Op != OpStore {
+			break
+		}
+		_ = s3.Args[2]
+		lstr := s3.Args[1]
+		mem := s3.Args[2]
+		if !(isSameSym(sym, "runtime.memequal") && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1 && sz == 1 && isInlinableMemequal(sz, config) && clobber(s1) && clobber(s2) && clobber(s3)) {
+			break
+		}
+		v.reset(OpStore)
+		v.Aux = typ.Bool
+		v0 := b.NewValue0(v.Pos, OpOffPtr, typ.BytePtr)
+		v0.AuxInt = config.ctxt.FixedFrameSize() + 3*config.RegSize
+		v1 := b.NewValue0(v.Pos, OpSP, typ.Uintptr)
+		v0.AddArg(v1)
+		v.AddArg(v0)
+		v2 := b.NewValue0(v.Pos, OpEq8, typ.Bool)
+		v3 := b.NewValue0(v.Pos, OpLoad, typ.UInt8)
+		v3.AddArg(rstr)
+		v3.AddArg(mem)
+		v2.AddArg(v3)
+		v4 := b.NewValue0(v.Pos, OpLoad, typ.UInt8)
+		v4.AddArg(lstr)
+		v4.AddArg(mem)
+		v2.AddArg(v4)
+		v.AddArg(v2)
+		v.AddArg(mem)
+		return true
+	}
+	return false
+}
+func rewriteValuegeneric_OpStaticCall_10(v *Value) bool {
 	// match: (StaticCall {sym} x)
 	// cond: needRaceCleanup(sym,v)
 	// result: x
