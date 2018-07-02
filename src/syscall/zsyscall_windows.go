@@ -12,11 +12,13 @@ var _ unsafe.Pointer
 // Do the interface allocations only once for common
 // Errno values.
 const (
-	errnoERROR_IO_PENDING = 997
+	errnoERROR_IO_PENDING          = 997
+	errnoERROR_TOO_MANY_OPEN_FILES = 4
 )
 
 var (
-	errERROR_IO_PENDING error = Errno(errnoERROR_IO_PENDING)
+	errERROR_IO_PENDING          error = Errno(errnoERROR_IO_PENDING)
+	errERROR_TOO_MANY_OPEN_FILES error = Errno(errnoERROR_TOO_MANY_OPEN_FILES)
 )
 
 // errnoErr returns common boxed Errno values, to prevent
@@ -27,6 +29,8 @@ func errnoErr(e Errno) error {
 		return nil
 	case errnoERROR_IO_PENDING:
 		return errERROR_IO_PENDING
+	case errnoERROR_TOO_MANY_OPEN_FILES:
+		return errERROR_TOO_MANY_OPEN_FILES
 	}
 	// TODO: add more here, after collecting data on the common
 	// error values see on Windows. (perhaps when running

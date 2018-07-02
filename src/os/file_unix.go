@@ -174,6 +174,7 @@ func openFileNolog(name string, flag int, perm FileMode) (*File, error) {
 	}
 
 	var r int
+	retry := 3
 	for {
 		var e error
 		r, e = syscall.Open(name, flag|syscall.O_CLOEXEC, syscallMode(perm))
@@ -185,6 +186,17 @@ func openFileNolog(name string, flag int, perm FileMode) (*File, error) {
 		// open(2) to be restarted for regular files. This is easy to reproduce on
 		// fuse file systems (see http://golang.org/issue/11180).
 		if runtime.GOOS == "darwin" && e == syscall.EINTR {
+			continue
+		}
+
+		// If we get an error related to having too many open files try running a GC
+		// to close any open-but-leaked FDs and then retry the open call. We try a few
+		// times because finalizers are not guaranteed to finish running before
+		// runtime.GC() returns. This is not perfect, but we are already going beyond
+		// what is required by the os.File contract.
+		if (e == syscall.EMFILE || e == syscall.ENFILE) && retry > 0 {
+			runtime.GC()
+			retry--
 			continue
 		}
 
