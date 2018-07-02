@@ -20,6 +20,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -50,7 +51,7 @@ const (
 type Logger struct {
 	mu     sync.Mutex // ensures atomic writes; protects the following fields
 	prefix string     // prefix to write at beginning of each line
-	flag   int        // properties
+	flag   int32      // properties
 	out    io.Writer  // destination for output
 	buf    []byte     // for accumulating text to write
 }
@@ -60,7 +61,7 @@ type Logger struct {
 // The prefix appears at the beginning of each generated log line.
 // The flag argument defines the logging properties.
 func New(out io.Writer, prefix string, flag int) *Logger {
-	return &Logger{out: out, prefix: prefix, flag: flag}
+	return &Logger{out: out, prefix: prefix, flag: int32(flag)}
 }
 
 // SetOutput sets the output destination for the logger.
@@ -93,13 +94,13 @@ func itoa(buf *[]byte, i int, wid int) {
 //   * l.prefix (if it's not blank),
 //   * date and/or time (if corresponding flags are provided),
 //   * file and line number (if corresponding flags are provided).
-func (l *Logger) formatHeader(buf *[]byte, t time.Time, file string, line int) {
+func (l *Logger) formatHeader(buf *[]byte, t time.Time, file string, line int, flag int) {
 	*buf = append(*buf, l.prefix...)
-	if l.flag&(Ldate|Ltime|Lmicroseconds) != 0 {
-		if l.flag&LUTC != 0 {
+	if flag&(Ldate|Ltime|Lmicroseconds) != 0 {
+		if flag&LUTC != 0 {
 			t = t.UTC()
 		}
-		if l.flag&Ldate != 0 {
+		if flag&Ldate != 0 {
 			year, month, day := t.Date()
 			itoa(buf, year, 4)
 			*buf = append(*buf, '/')
@@ -108,22 +109,22 @@ func (l *Logger) formatHeader(buf *[]byte, t time.Time, file string, line int) {
 			itoa(buf, day, 2)
 			*buf = append(*buf, ' ')
 		}
-		if l.flag&(Ltime|Lmicroseconds) != 0 {
+		if flag&(Ltime|Lmicroseconds) != 0 {
 			hour, min, sec := t.Clock()
 			itoa(buf, hour, 2)
 			*buf = append(*buf, ':')
 			itoa(buf, min, 2)
 			*buf = append(*buf, ':')
 			itoa(buf, sec, 2)
-			if l.flag&Lmicroseconds != 0 {
+			if flag&Lmicroseconds != 0 {
 				*buf = append(*buf, '.')
 				itoa(buf, t.Nanosecond()/1e3, 6)
 			}
 			*buf = append(*buf, ' ')
 		}
 	}
-	if l.flag&(Lshortfile|Llongfile) != 0 {
-		if l.flag&Lshortfile != 0 {
+	if flag&(Lshortfile|Llongfile) != 0 {
+		if flag&Lshortfile != 0 {
 			short := file
 			for i := len(file) - 1; i > 0; i-- {
 				if file[i] == '/' {
@@ -147,28 +148,34 @@ func (l *Logger) formatHeader(buf *[]byte, t time.Time, file string, line int) {
 // provided for generality, although at the moment on all pre-defined
 // paths it will be 2.
 func (l *Logger) Output(calldepth int, s string) error {
-	now := time.Now() // get this early.
+	flag := int(atomic.LoadInt32(&l.flag))
+
+	var now time.Time
+	if flag&(Ldate|Ltime|Lmicroseconds) != 0 {
+		now = time.Now() // get this early.
+	}
+
 	var file string
 	var line int
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.flag&(Lshortfile|Llongfile) != 0 {
-		// Release lock while getting caller info - it's expensive.
-		l.mu.Unlock()
 		var ok bool
 		_, file, line, ok = runtime.Caller(calldepth)
 		if !ok {
 			file = "???"
 			line = 0
 		}
-		l.mu.Lock()
 	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
 	l.buf = l.buf[:0]
-	l.formatHeader(&l.buf, now, file, line)
+	l.formatHeader(&l.buf, now, file, line, flag)
 	l.buf = append(l.buf, s...)
 	if len(s) == 0 || s[len(s)-1] != '\n' {
 		l.buf = append(l.buf, '\n')
 	}
+
 	_, err := l.out.Write(l.buf)
 	return err
 }
@@ -228,16 +235,12 @@ func (l *Logger) Panicln(v ...interface{}) {
 
 // Flags returns the output flags for the logger.
 func (l *Logger) Flags() int {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.flag
+	return int(atomic.LoadInt32(&l.flag))
 }
 
 // SetFlags sets the output flags for the logger.
 func (l *Logger) SetFlags(flag int) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.flag = flag
+	atomic.StoreInt32(&l.flag, int32(flag))
 }
 
 // Prefix returns the output prefix for the logger.
