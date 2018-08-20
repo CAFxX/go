@@ -547,11 +547,13 @@ CALLFN(·call536870912, 536870912)
 CALLFN(·call1073741824, 1073741824)
 
 TEXT runtime·procyield(SB),NOSPLIT,$0-0
-	MOVL	cycles+0(FP), AX
-again:
+	// "It is important to note that the number of cycles delayed by the pause instruction may vary from
+	// one processor family to another. You should avoid using multiple pause instructions, assuming you
+	// will introduce a delay of a specific cycle count.  Since you cannot guarantee the cycle count from
+	// one system to the next, you should check the lock in between each pause to avoid introducing
+	// unnecessarily long delays on new systems."
+	// https://software.intel.com/en-us/articles/benefitting-power-and-performance-sleep-loops
 	PAUSE
-	SUBL	$1, AX
-	JNZ	again
 	RET
 
 
