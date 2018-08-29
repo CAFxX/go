@@ -1415,6 +1415,118 @@
 (StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
       && isSameSym(sym,"runtime.memequal")
       && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 16
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq64 (Load <typ.UInt64> rstr mem) 
+                            (Load <typ.UInt64> lstr mem))
+                      (Eq64 (Load <typ.UInt64> (OffPtr <typ.BytePtr> [8] rstr) mem) 
+                            (Load <typ.UInt64> (OffPtr <typ.BytePtr> [8] lstr) mem)))
+                mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 15
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq64 (Load <typ.UInt64> rstr mem) 
+                            (Load <typ.UInt64> lstr mem))
+                      (Eq64 (Load <typ.UInt64> (OffPtr <typ.BytePtr> [7] rstr) mem) 
+                            (Load <typ.UInt64> (OffPtr <typ.BytePtr> [7] lstr) mem)))
+                mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 14
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq64 (Load <typ.UInt64> rstr mem) 
+                            (Load <typ.UInt64> lstr mem))
+                      (Eq64 (Load <typ.UInt64> (OffPtr <typ.BytePtr> [6] rstr) mem) 
+                            (Load <typ.UInt64> (OffPtr <typ.BytePtr> [6] lstr) mem)))
+                mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 13
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq64 (Load <typ.UInt64> rstr mem) 
+                            (Load <typ.UInt64> lstr mem))
+                      (Eq64 (Load <typ.UInt64> (OffPtr <typ.BytePtr> [5] rstr) mem) 
+                            (Load <typ.UInt64> (OffPtr <typ.BytePtr> [5] lstr) mem)))
+                mem)
+                
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 12
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq64 (Load <typ.UInt64> rstr mem) 
+                            (Load <typ.UInt64> lstr mem))
+                      (Eq32 (Load <typ.UInt32> (OffPtr <typ.BytePtr> [8] rstr) mem) 
+                            (Load <typ.UInt32> (OffPtr <typ.BytePtr> [8] lstr) mem)))
+                mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 11
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq64 (Load <typ.UInt64> rstr mem) 
+                            (Load <typ.UInt64> lstr mem))
+                      (Eq32 (Load <typ.UInt32> (OffPtr <typ.BytePtr> [7] rstr) mem) 
+                            (Load <typ.UInt32> (OffPtr <typ.BytePtr> [7] lstr) mem)))
+                mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 10
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq64 (Load <typ.UInt64> rstr mem) 
+                            (Load <typ.UInt64> lstr mem))
+                      (Eq16 (Load <typ.UInt16> (OffPtr <typ.BytePtr> [8] rstr) mem) 
+                            (Load <typ.UInt16> (OffPtr <typ.BytePtr> [8] lstr) mem)))
+                mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 9
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq64 (Load <typ.UInt64> rstr mem) 
+                            (Load <typ.UInt64> lstr mem))
+                      (Eq8  (Load <typ.UInt8>  (OffPtr <typ.BytePtr> [8] rstr) mem) 
+                            (Load <typ.UInt8>  (OffPtr <typ.BytePtr> [8] lstr) mem)))
+                mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
       && sz == 8
       && isInlinableMemequal(sz,config)
       && clobber(s1) && clobber(s2) && clobber(s3)
@@ -1423,10 +1535,66 @@
 (StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
       && isSameSym(sym,"runtime.memequal")
       && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 7
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq32 (Load <typ.UInt32> rstr mem) 
+                            (Load <typ.UInt32> lstr mem))
+                      (Eq32 (Load <typ.UInt32> (OffPtr <typ.BytePtr> [3] rstr) mem) 
+                            (Load <typ.UInt32> (OffPtr <typ.BytePtr> [3] lstr) mem)))
+                mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 6
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq32 (Load <typ.UInt32> rstr mem) 
+                            (Load <typ.UInt32> lstr mem))
+                      (Eq16 (Load <typ.UInt16> (OffPtr <typ.BytePtr> [4] rstr) mem) 
+                            (Load <typ.UInt16> (OffPtr <typ.BytePtr> [4] lstr) mem)))
+                mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 5
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq32 (Load <typ.UInt32> rstr mem) 
+                            (Load <typ.UInt32> lstr mem))
+                      (Eq8  (Load <typ.UInt8>  (OffPtr <typ.BytePtr> [4] rstr) mem) 
+                            (Load <typ.UInt8>  (OffPtr <typ.BytePtr> [4] lstr) mem)))
+                mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
       && sz == 4
       && isInlinableMemequal(sz,config)
       && clobber(s1) && clobber(s2) && clobber(s3)
       -> (Store {typ.Bool} (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) (Eq32 (Load <typ.UInt32> rstr mem) (Load <typ.UInt32> lstr mem)) mem)
+
+(StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
+      && isSameSym(sym,"runtime.memequal")
+      && s1.Uses == 1 && s2.Uses == 1 && s3.Uses == 1
+      && sz == 3
+      && isInlinableMemequal(sz,config)
+      && clobber(s1) && clobber(s2) && clobber(s3)
+      -> (Store {typ.Bool} 
+                (OffPtr <typ.BytePtr> [config.ctxt.FixedFrameSize() + 3 * config.RegSize] (SP <typ.Uintptr>)) 
+                (AndB (Eq16 (Load <typ.UInt16> rstr mem) 
+                            (Load <typ.UInt16> lstr mem))
+                      (Eq8  (Load <typ.UInt8>  (OffPtr <typ.BytePtr> [2] rstr) mem) 
+                            (Load <typ.UInt8>  (OffPtr <typ.BytePtr> [2] lstr) mem)))
+                mem)
 
 (StaticCall {sym} s1:(Store _ (Const(64|32) [sz]) s2:(Store _ rstr s3:(Store _ lstr mem))))
       && isSameSym(sym,"runtime.memequal")
