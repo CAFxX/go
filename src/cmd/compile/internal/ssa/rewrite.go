@@ -968,14 +968,14 @@ func isInlinableMemmove(dst, src *Value, sz int64, c *Config) bool {
 // of size sz and has compare instruction for that size.
 func isInlinableMemequal(sz int64, c *Config) bool {
 	switch sz {
-	case 9, 10, 11, 12, 13, 14, 15, 16:
+	case 8, 9, 10, 11, 12, 13, 14, 15, 16:
 		switch c.arch {
 		case "amd64", "amd64p32", "ppc64", "ppc64le", "arm64", "s390x", "wasm":
 			return true
 		default:
 			return false
 		}
-	case 2, 3, 4, 5, 6, 7, 8:
+	case 2, 3, 4, 5, 6, 7:
 		switch c.arch {
 		case "amd64", "amd64p32", "386", "ppc64", "ppc64le", "arm64", "s390x", "wasm":
 			return true
