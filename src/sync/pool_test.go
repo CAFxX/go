@@ -43,6 +43,7 @@ func TestPool(t *testing.T) {
 	p.Put("c")
 	debug.SetGCPercent(100) // to allow following GC to actually run
 	runtime.GC()
+	runtime.GC() // we now keep some objects until two consecutive GCs
 	if g := p.Get(); g != nil {
 		t.Fatalf("got %#v; want nil after GC", g)
 	}

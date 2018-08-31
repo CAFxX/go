@@ -205,7 +205,7 @@ func (p *Pool) pinSlow() *poolLocal {
 		return indexLocal(l, pid)
 	}
 	if p.local == nil {
-		allPools = append(allPools, p)
+		allPools.pushBack(p)
 	}
 	// If GOMAXPROCS changes between GCs, we re-allocate the array and lose the old one.
 	size := runtime.GOMAXPROCS(0)
@@ -215,6 +215,8 @@ func (p *Pool) pinSlow() *poolLocal {
 	return &local[pid]
 }
 
+var cleanupCount uint
+
 func poolCleanup() {
 	// This function is called with the world stopped, at the beginning of a garbage collection.
 	// It must not allocate and probably should not call any runtime functions.
@@ -222,25 +224,35 @@ func poolCleanup() {
 	// 1. To prevent false retention of whole Pools.
 	// 2. If GC happens while a goroutine works with l.shared in Put/Get,
 	//    it will retain whole Pool. So next cycle memory consumption would be doubled.
-	for i, p := range allPools {
-		allPools[i] = nil
+	for e := allPools.front(); e != nil; e = e.nextElement() {
+		p := e.value
+		empty := true
 		for i := 0; i < int(p.localSize); i++ {
 			l := indexLocal(p.local, i)
+			if l.private != nil || len(l.shared) > 0 {
+				empty = false
+			}
+			if i%2 == int(cleanupCount%2) {
+				continue
+			}
 			l.private = nil
 			for j := range l.shared {
 				l.shared[j] = nil
 			}
 			l.shared = nil
 		}
-		p.local = nil
-		p.localSize = 0
+		if empty {
+			p.local = nil
+			p.localSize = 0
+			allPools.remove(e)
+		}
 	}
-	allPools = []*Pool{}
+	cleanupCount++
 }
 
 var (
 	allPoolsMu Mutex
-	allPools   []*Pool
+	allPools   list
 )
 
 func init() {
@@ -256,3 +268,60 @@ func indexLocal(l unsafe.Pointer, i int) *poolLocal {
 func runtime_registerPoolCleanup(cleanup func())
 func runtime_procPin() int
 func runtime_procUnpin()
+
+// Stripped-down version of container/list
+
+type element struct {
+	next, prev *element
+	list       *list
+	value      *Pool
+}
+
+func (e *element) nextElement() *element {
+	if p := e.next; e.list != nil && p != &e.list.root {
+		return p
+	}
+	return nil
+}
+
+type list struct {
+	root element
+}
+
+func (l *list) front() *element {
+	if l.root.next == &l.root {
+		return nil
+	}
+	return l.root.next
+}
+
+func (l *list) lazyInit() {
+	if l.root.next == nil {
+		l.root.next = &l.root
+		l.root.prev = &l.root
+	}
+}
+
+func (l *list) insert(e, at *element) {
+	n := at.next
+	at.next = e
+	e.prev = at
+	e.next = n
+	n.prev = e
+	e.list = l
+}
+
+func (l *list) remove(e *element) {
+	if e.list == l {
+		e.prev.next = e.next
+		e.next.prev = e.prev
+		e.next = nil
+		e.prev = nil
+		e.list = nil
+	}
+}
+
+func (l *list) pushBack(v *Pool) {
+	l.lazyInit()
+	l.insert(&element{value: v}, l.root.prev)
+}
