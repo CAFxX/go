@@ -8,8 +8,11 @@
 package sync_test
 
 import (
+	"bytes"
+	"math/rand"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	. "sync"
 	"sync/atomic"
 	"testing"
@@ -173,4 +176,56 @@ func BenchmarkPoolOverflow(b *testing.B) {
 			}
 		}
 	})
+}
+
+var bufSizes = []int{1 << 8, 1 << 12, 1 << 16, 1 << 20, 1 << 24}
+
+func BenchmarkPoolBuffer(b *testing.B) {
+	for _, sz := range bufSizes {
+		sz := sz
+		b.Run(strconv.Itoa(sz), func(b *testing.B) {
+			var p Pool
+			var i int64
+			b.RunParallel(func(pb *testing.PB) {
+				rnd := rand.New(rand.NewSource(atomic.AddInt64(&i, 1)))
+				var j int
+				for pb.Next() {
+					buf, _ := p.Get().(*bytes.Buffer)
+					if buf == nil {
+						buf = &bytes.Buffer{}
+					}
+					buf.Grow(rnd.Intn(sz * 2))
+
+					go p.Put(buf)
+					j++
+					if j%256 == 0 {
+						runtime.Gosched()
+					}
+				}
+			})
+		})
+	}
+}
+
+func BenchmarkNoPoolBuffer(b *testing.B) {
+	for _, sz := range bufSizes {
+		sz := sz
+		b.Run(strconv.Itoa(sz), func(b *testing.B) {
+			var i int64
+			b.RunParallel(func(pb *testing.PB) {
+				rnd := rand.New(rand.NewSource(atomic.AddInt64(&i, 1)))
+				var j int
+				for pb.Next() {
+					buf := &bytes.Buffer{}
+					buf.Grow(rnd.Intn(sz * 2))
+
+					go runtime.KeepAlive(buf)
+					j++
+					if j%256 == 0 {
+						runtime.Gosched()
+					}
+				}
+			})
+		})
+	}
 }
