@@ -220,10 +220,22 @@ var cleanupCount uint
 func poolCleanup() {
 	// This function is called with the world stopped, at the beginning of a garbage collection.
 	// It must not allocate and probably should not call any runtime functions.
-	// Defensively zero out everything, 2 reasons:
+	// When pools or poolLocals need to be emptied we defensively zero out everything for 2 reasons:
 	// 1. To prevent false retention of whole Pools.
 	// 2. If GC happens while a goroutine works with l.shared in Put/Get,
 	//    it will retain whole Pool. So next cycle memory consumption would be doubled.
+	// Under normal circumstances we don't delete all pools, instead we drop half of the poolLocals
+	// every cycle, and whole pools if all poolLocals are empty when starting the cleanup (this means
+	// that a non-empty Pool will take 3 GC cycles to be completely deleted: the first will delete
+	// half of the poolLocals, the second the remaining half and the third the now empty Pool itself).
+
+	// deleteAll is a placeholder for dynamically controlling whether pools are aggressively
+	// or partially cleaned up. If true, all pools are emptied every GC; if false only half of
+	// the poolLocals are dropped. For now it is a constant so that it can be optimized away
+	// at compile-time; ideally the runtime should decide whether to set deleteAll to true
+	// based on memory pressure.
+	const deleteAll = false
+
 	for e := allPools.front(); e != nil; e = e.nextElement() {
 		p := e.value
 		empty := true
@@ -232,16 +244,15 @@ func poolCleanup() {
 			if l.private != nil || len(l.shared) > 0 {
 				empty = false
 			}
-			if i%2 == int(cleanupCount%2) {
-				continue
+			if i%2 == int(cleanupCount%2) || deleteAll {
+				l.private = nil
+				for j := range l.shared {
+					l.shared[j] = nil
+				}
+				l.shared = nil
 			}
-			l.private = nil
-			for j := range l.shared {
-				l.shared[j] = nil
-			}
-			l.shared = nil
 		}
-		if empty {
+		if empty || deleteAll {
 			p.local = nil
 			p.localSize = 0
 			allPools.remove(e)
@@ -269,7 +280,9 @@ func runtime_registerPoolCleanup(cleanup func())
 func runtime_procPin() int
 func runtime_procUnpin()
 
-// Stripped-down version of container/list
+// Stripped-down and specialized version of container/list (to avoid using interface{}
+// casts, since they can allocate and allocation is forbidden in poolCleanup). Note that
+// these functions are so small and simple that they all end up completely inlined.
 
 type element struct {
 	next, prev *element
