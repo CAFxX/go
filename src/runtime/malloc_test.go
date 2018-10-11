@@ -134,7 +134,7 @@ func TestMemStats(t *testing.T) {
 	}
 }
 
-func TestStringConcatenationAllocs(t *testing.T) {
+func TestShortStringConcatenationAllocs(t *testing.T) {
 	n := testing.AllocsPerRun(1e3, func() {
 		b := make([]byte, 10)
 		for i := 0; i < 10; i++ {
@@ -145,7 +145,26 @@ func TestStringConcatenationAllocs(t *testing.T) {
 			t.Fatalf("want %v, got %v", want, s)
 		}
 	})
-	// Only string concatenation allocates.
+	// Only string concatenation allocates and short string interning may
+	// cause to have no allocations at all.
+	if n != 0 {
+		t.Fatalf("want 0 allocations, got %v", n)
+	}
+}
+
+func TestLongStringConcatenationAllocs(t *testing.T) {
+	want := "foo" + strings.Repeat("0123456789", 10)
+	n := testing.AllocsPerRun(1e3, func() {
+		b := make([]byte, 100)
+		for i := 0; i < len(b); i++ {
+			b[i] = byte(i%10) + '0'
+		}
+		s := "foo" + string(b)
+		if s != want {
+			t.Fatalf("want %v, got %v", want, s)
+		}
+	})
+	// Only string concatenation allocates. Long strings are not interned.
 	if n != 1 {
 		t.Fatalf("want 1 allocation, got %v", n)
 	}

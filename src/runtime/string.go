@@ -46,6 +46,26 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	if count == 1 && (buf != nil || !stringDataOnStack(a[idx])) {
 		return a[idx]
 	}
+
+	if l <= strInternMaxLen && (buf == nil || l > len(buf)) {
+		// FIXME: this duplication is really ugly
+		// TODO: find a way to intern string concatenation without a temporary buffer
+		var ib internBuf
+		_b := ib[:]
+		for _, x := range a {
+			copy(_b, x)
+			_b = _b[len(x):]
+		}
+		s, interned, idx := stringIsInterned(slicebytetostringtmp(ib[:l]))
+		if interned {
+			return s
+		}
+		s, b := rawstring(l)
+		copy(b, ib[:l])
+		internString(s, idx)
+		return s
+	}
+
 	s, b, inbuf := rawstringtmp(buf, l)
 	for _, x := range a {
 		copy(b, x)
@@ -525,6 +545,8 @@ func gostringw(strw *uint16) string {
 
 const strInternMaxLen = 64 // (arbitrary) maximum length of string to be considered for interning
 
+type internBuf [strInternMaxLen]byte
+
 func internString(s string, idx uintptr) {
 	if len(s) > strInternMaxLen {
 		return
@@ -534,7 +556,7 @@ func internString(s string, idx uintptr) {
 
 // TODO: any way to force inline this one?
 func stringIsInterned(s string) (string, bool, uintptr) {
-	ps := (*stringStruct)(unsafe.Pointer(&s))
+	ps := (*stringStruct)(noescape(unsafe.Pointer(&s)))
 	if ps.len > strInternMaxLen {
 		return "", false, 0
 	}
