@@ -3942,6 +3942,7 @@ func procresize(nprocs int32) *p {
 				pp.deferpool[i] = pp.deferpoolbuf[i][:0]
 			}
 			pp.wbBuf.reset()
+			pp.strInternSeed = uintptr(fastrand())
 			atomicstorep(unsafe.Pointer(&allp[i]), unsafe.Pointer(pp))
 		}
 		if pp.mcache == nil {
