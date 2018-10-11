@@ -2179,6 +2179,14 @@ func clearpools() {
 		poolcleanup()
 	}
 
+	// clear per-P string interning tables
+	for _, p := range allp {
+		for i := range p.strInternTable {
+			p.strInternTable[i] = ""
+		}
+		p.strInternSeed = uintptr(fastrand())
+	}
+
 	// Clear central sudog cache.
 	// Leave per-P caches alone, they have strictly bounded size.
 	// Disconnect cached list before dropping it on the floor,

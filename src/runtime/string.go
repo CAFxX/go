@@ -46,10 +46,18 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	if count == 1 && (buf != nil || !stringDataOnStack(a[idx])) {
 		return a[idx]
 	}
-	s, b := rawstringtmp(buf, l)
+	s, b, inbuf := rawstringtmp(buf, l)
 	for _, x := range a {
 		copy(b, x)
 		b = b[len(x):]
+	}
+	// TODO: intern the resulting string *before* allocation
+	if !inbuf {
+		if is, interned, idx := stringIsInterned(s); interned {
+			return is
+		} else {
+			internString(s, idx)
+		}
 	}
 	return s
 }
@@ -95,15 +103,24 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 		return
 	}
 
-	var p unsafe.Pointer
 	if buf != nil && len(b) <= len(buf) {
-		p = unsafe.Pointer(buf)
-	} else {
-		p = mallocgc(uintptr(len(b)), nil, false)
+		p := unsafe.Pointer(buf)
+		stringStructOf(&str).str = p
+		stringStructOf(&str).len = len(b)
+		memmove(p, (*(*slice)(unsafe.Pointer(&b))).array, uintptr(len(b)))
+		return
 	}
+
+	s, interned, idx := stringIsInterned(slicebytetostringtmp(b))
+	if interned {
+		return s
+	}
+
+	p := mallocgc(uintptr(len(b)), nil, false)
 	stringStructOf(&str).str = p
 	stringStructOf(&str).len = len(b)
 	memmove(p, (*(*slice)(unsafe.Pointer(&b))).array, uintptr(len(b)))
+	internString(str, idx)
 	return
 }
 
@@ -115,10 +132,11 @@ func stringDataOnStack(s string) bool {
 	return stk.lo <= ptr && ptr < stk.hi
 }
 
-func rawstringtmp(buf *tmpBuf, l int) (s string, b []byte) {
+func rawstringtmp(buf *tmpBuf, l int) (s string, b []byte, inbuf bool) {
 	if buf != nil && l <= len(buf) {
 		b = buf[:l]
 		s = slicebytetostringtmp(b)
+		inbuf = true
 	} else {
 		s, b = rawstring(l)
 	}
@@ -203,7 +221,7 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 	for _, r := range a {
 		size1 += encoderune(dum[:], r)
 	}
-	s, b := rawstringtmp(buf, size1+3)
+	s, b, inbuf := rawstringtmp(buf, size1+3)
 	size2 := 0
 	for _, r := range a {
 		// check for race
@@ -212,7 +230,16 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 		}
 		size2 += encoderune(b[size2:], r)
 	}
-	return s[:size2]
+	s = s[:size2]
+	// TODO: intern the resulting string *before* allocation
+	if !inbuf {
+		if is, interned, idx := stringIsInterned(s); interned {
+			return is
+		} else {
+			internString(s, idx)
+		}
+	}
+	return s
 }
 
 type stringStruct struct {
@@ -492,4 +519,36 @@ func gostringw(strw *uint16) string {
 	}
 	b[n2] = 0 // for luck
 	return s[:n2]
+}
+
+// string interning logic
+
+const strInternMaxLen = 64 // (arbitrary) maximum length of string to be considered for interning
+
+func internString(s string, idx uintptr) {
+	if len(s) > strInternMaxLen {
+		return
+	}
+	getg().m.p.ptr().strInternTable[idx] = s
+}
+
+// TODO: any way to force inline this one?
+func stringIsInterned(s string) (string, bool, uintptr) {
+	ps := (*stringStruct)(unsafe.Pointer(&s))
+	if ps.len > strInternMaxLen {
+		return "", false, 0
+	}
+
+	procPin()
+	_p_ := getg().m.p.ptr()
+	hash := memhash(ps.str, _p_.strInternSeed, uintptr(ps.len))
+	idx := hash % uintptr(len(_p_.strInternTable))
+	is := _p_.strInternTable[idx]
+	procUnpin()
+
+	pis := (*stringStruct)(unsafe.Pointer(&is))
+	if pis.len == ps.len && memequal(pis.str, ps.str, uintptr(ps.len)) {
+		return is, true, idx
+	}
+	return "", false, idx
 }
