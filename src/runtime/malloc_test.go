@@ -145,7 +145,7 @@ func TestShortStringConcatenationAllocs(t *testing.T) {
 			t.Fatalf("want %v, got %v", want, s)
 		}
 	})
-	// Only string concatenation allocates and short string interning may
+	// Only string concatenation allocates and short string interning will
 	// cause to have no allocations at all.
 	if n != 0 {
 		t.Fatalf("want 0 allocations, got %v", n)

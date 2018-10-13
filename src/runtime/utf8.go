@@ -100,7 +100,8 @@ func decoderune(s string, k int) (r rune, pos int) {
 }
 
 // encoderune writes into p (which must be large enough) the UTF-8 encoding of the rune.
-// It returns the number of bytes written.
+// It returns the number of bytes written. It must be kept in sync with encodedrunebytes.
+// TODO: deduplicate with utf8.EncodeRune
 func encoderune(p []byte, r rune) int {
 	// Negative values are erroneous. Making it unsigned addresses the problem.
 	switch i := uint32(r); {
@@ -127,6 +128,23 @@ func encoderune(p []byte, r rune) int {
 		p[1] = tx | byte(r>>12)&maskx
 		p[2] = tx | byte(r>>6)&maskx
 		p[3] = tx | byte(r)&maskx
+		return 4
+	}
+}
+
+// encodedrunebytes returns the number of bytes required to UTF-8 encode the specified rune.
+// It is a stripped-down version of encoderune for inlining purposes, and therefore it must be
+// kept in sync. If encoderune ever becomes inlinable and the optimizer is able to elide all
+// writes to the buffer then this can go away.
+func encodedrunebytes(r rune) int {
+	switch i := uint32(r); {
+	case i <= rune1Max:
+		return 1
+	case i <= rune2Max:
+		return 2
+	case i <= rune3Max, i > maxRune, surrogateMin <= i && i <= surrogateMax:
+		return 3
+	default:
 		return 4
 	}
 }
