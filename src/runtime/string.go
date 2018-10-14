@@ -50,7 +50,8 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	if l <= strInternMaxLen && (buf == nil || l > len(buf)) {
 		// FIXME: this duplication is really ugly
 		// TODO: find a way to intern string concatenation without a temporary buffer
-		var ib internBuf
+		// or at least to avoid the second copy
+		var ib internBuf // must not escape the stack
 		_b := ib[:]
 		for _, x := range a {
 			copy(_b, x)
@@ -66,18 +67,10 @@ func concatstrings(buf *tmpBuf, a []string) string {
 		return s
 	}
 
-	s, b, inbuf := rawstringtmp(buf, l)
+	s, b := rawstringtmp(buf, l)
 	for _, x := range a {
 		copy(b, x)
 		b = b[len(x):]
-	}
-	// TODO: intern the resulting string *before* allocation
-	if !inbuf {
-		if is, interned, idx := stringIsInterned(s); interned {
-			return is
-		} else {
-			internString(s, idx)
-		}
 	}
 	return s
 }
@@ -152,11 +145,10 @@ func stringDataOnStack(s string) bool {
 	return stk.lo <= ptr && ptr < stk.hi
 }
 
-func rawstringtmp(buf *tmpBuf, l int) (s string, b []byte, inbuf bool) {
+func rawstringtmp(buf *tmpBuf, l int) (s string, b []byte) {
 	if buf != nil && l <= len(buf) {
 		b = buf[:l]
 		s = slicebytetostringtmp(b)
-		inbuf = true
 	} else {
 		s, b = rawstring(l)
 	}
@@ -240,8 +232,33 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 	for _, r := range a {
 		size1 += encodedrunebytes(r)
 	}
-	s, b, inbuf := rawstringtmp(buf, size1+3)
+
 	size2 := 0
+
+	if l := size1 + 3; l <= strInternMaxLen && (buf == nil || l > len(buf)) {
+		// FIXME: this duplication is really ugly
+		// TODO: find a way to intern rune encoding without a temporary buffer
+		// or at least to avoid the second copy
+		var ib internBuf // must not escape the stack
+		_b := ib[:]
+		for _, r := range a {
+			// check for race
+			if size2 >= size1 {
+				break
+			}
+			size2 += encoderune(_b[size2:], r)
+		}
+		s, interned, idx := stringIsInterned(slicebytetostringtmp(ib[:size2]))
+		if interned {
+			return s
+		}
+		s, b := rawstring(size2)
+		copy(b, ib[:size2])
+		internString(s, idx)
+		return s
+	}
+
+	s, b := rawstringtmp(buf, size1+3)
 	for _, r := range a {
 		// check for race
 		if size2 >= size1 {
@@ -250,14 +267,6 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 		size2 += encoderune(b[size2:], r)
 	}
 	s = s[:size2]
-	// TODO: intern the resulting string *before* allocation
-	if !inbuf {
-		if is, interned, idx := stringIsInterned(s); interned {
-			return is
-		} else {
-			internString(s, idx)
-		}
-	}
 	return s
 }
 
