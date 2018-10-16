@@ -97,6 +97,7 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 		// you find the indices and convert the subslice to string.
 		return ""
 	}
+
 	if raceenabled {
 		racereadrangepc(unsafe.Pointer(&b[0]),
 			uintptr(l),
@@ -106,30 +107,40 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 	if msanenabled {
 		msanread(unsafe.Pointer(&b[0]), uintptr(l))
 	}
+
 	if l == 1 {
 		stringStructOf(&str).str = unsafe.Pointer(&staticbytes[b[0]])
 		stringStructOf(&str).len = 1
 		return
 	}
 
-	if buf != nil && len(b) <= len(buf) {
-		p := unsafe.Pointer(buf)
-		stringStructOf(&str).str = p
-		stringStructOf(&str).len = len(b)
-		memmove(p, (*(*slice)(unsafe.Pointer(&b))).array, uintptr(len(b)))
-		return
+	usingBuf := buf != nil && l <= len(buf)
+	tryIntern := l <= strInternMaxLen && !usingBuf
+
+	var idx uintptr
+	if tryIntern {
+		var interned bool
+		str, interned, idx = stringIsInterned(slicebytetostringtmp(b))
+		if interned {
+			return
+		}
 	}
 
-	s, interned, idx := stringIsInterned(slicebytetostringtmp(b))
-	if interned {
-		return s
+	var p unsafe.Pointer
+	if usingBuf {
+		p = unsafe.Pointer(buf)
+	} else {
+		p = mallocgc(uintptr(l), nil, false)
 	}
 
-	p := mallocgc(uintptr(len(b)), nil, false)
 	stringStructOf(&str).str = p
-	stringStructOf(&str).len = len(b)
-	memmove(p, (*(*slice)(unsafe.Pointer(&b))).array, uintptr(len(b)))
-	internString(str, idx)
+	stringStructOf(&str).len = l
+	memmove(p, (*(*slice)(unsafe.Pointer(&b))).array, uintptr(l))
+
+	if tryIntern {
+		internString(str, idx)
+	}
+
 	return
 }
 
@@ -535,7 +546,21 @@ func gostringw(strw *uint16) string {
 	return s[:n2]
 }
 
-// string interning logic
+// String interning
+// Experimental automatic string interning support based on per-P interning tables
+// that are cleared during every GC. Since the tables are small-ish and they are
+// fixed in size collisions are likely: when a collision happens the old string is
+// replaced with the new one; this means that when checking for presence we have
+// to compare the whole string in addition to the hash. To bound the resulting
+// overhead automatic interning is performed on small strings (<strInternMaxLen).
+// TODO: Move most string interning to the concurrent GC mark phase.
+// TODO: Expose APIs to perform on-demand interning.
+// TODO: Tune strInternMaxLen and the size of the per-P tables.
+// TODO: Remove the extra copy due to the use of internBuf.
+// TODO: Evaluate alternatives to memhash.
+// TODO: Once midstack inlining works deduplicate the checks for strInternMaxLen
+//       in the functions above and allow the early return in stringIsInterned to
+//       be inlined.
 
 const strInternMaxLen = 64 // (arbitrary) maximum length of string to be considered for interning
 
@@ -545,10 +570,14 @@ func internString(s string, idx uintptr) {
 	if len(s) > strInternMaxLen {
 		return
 	}
+	// Note that because we're not pinned, we may be writing to the table of
+	// a different P or otherwise with a different seed (because GC happened
+	// in the meanwhile): while writes in such a situation will degrade the
+	// effectiveness of the per-P table, they don't pose correctness issues
+	// because stringIsInterned needs to check the strings for equality.
 	getg().m.p.ptr().strInternTable[idx] = s
 }
 
-// TODO: any way to force inline this one, or at least the early return?
 func stringIsInterned(s string) (string, bool, uintptr) {
 	ps := (*stringStruct)(noescape(unsafe.Pointer(&s)))
 	if ps.len > strInternMaxLen {
