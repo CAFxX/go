@@ -197,10 +197,9 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 	if msanenabled && len(a) > 0 {
 		msanread(unsafe.Pointer(&a[0]), uintptr(len(a))*unsafe.Sizeof(a[0]))
 	}
-	var dum [4]byte
 	size1 := 0
 	for _, r := range a {
-		size1 += encoderune(dum[:], r)
+		size1 += encodedrunebytes(r)
 	}
 	s, b := rawstringtmp(buf, size1+3)
 	size2 := 0
@@ -474,11 +473,10 @@ func gostringnocopy(str *byte) string {
 }
 
 func gostringw(strw *uint16) string {
-	var buf [8]byte
 	str := (*[maxAlloc/2/2 - 1]uint16)(unsafe.Pointer(strw))
 	n1 := 0
 	for i := 0; str[i] != 0; i++ {
-		n1 += encoderune(buf[:], rune(str[i]))
+		n1 += encodedrunebytes(rune(str[i]))
 	}
 	s, b := rawstring(n1 + 4)
 	n2 := 0
