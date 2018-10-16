@@ -47,30 +47,26 @@ func concatstrings(buf *tmpBuf, a []string) string {
 		return a[idx]
 	}
 
-	if l <= strInternMaxLen && (buf == nil || l > len(buf)) {
-		// FIXME: this duplication is really ugly
-		// TODO: find a way to intern string concatenation without a temporary buffer
-		// or at least to avoid the second copy
-		var ib internBuf // must not escape the stack
-		_b := ib[:]
-		for _, x := range a {
-			copy(_b, x)
-			_b = _b[len(x):]
-		}
-		s, interned, idx := stringIsInterned(slicebytetostringtmp(ib[:l]))
-		if interned {
-			return s
-		}
-		s, b := rawstring(l)
-		copy(b, ib[:l])
-		internString(s, idx)
-		return s
+	// TODO: find a way to intern rune encoding without a temporary buffer
+	// or at least to avoid the second copy
+	var s string
+	var b []byte
+	usingInternBuf := l <= strInternMaxLen && (buf == nil || l > len(buf))
+	if !usingInternBuf {
+		s, b = rawstringtmp(buf, l)
+	} else {
+		var _b internBuf // must not escape the stack
+		b = _b[:l]
 	}
 
-	s, b := rawstringtmp(buf, l)
+	sz := 0
 	for _, x := range a {
-		copy(b, x)
-		b = b[len(x):]
+		copy(b[sz:], x)
+		sz += len(x)
+	}
+
+	if usingInternBuf {
+		return interntmp(b)
 	}
 	return s
 }
@@ -233,32 +229,20 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 		size1 += encodedrunebytes(r)
 	}
 
-	size2 := 0
-
-	if l := size1 + 3; l <= strInternMaxLen && (buf == nil || l > len(buf)) {
-		// FIXME: this duplication is really ugly
-		// TODO: find a way to intern rune encoding without a temporary buffer
-		// or at least to avoid the second copy
-		var ib internBuf // must not escape the stack
-		_b := ib[:]
-		for _, r := range a {
-			// check for race
-			if size2 >= size1 {
-				break
-			}
-			size2 += encoderune(_b[size2:], r)
-		}
-		s, interned, idx := stringIsInterned(slicebytetostringtmp(ib[:size2]))
-		if interned {
-			return s
-		}
-		s, b := rawstring(size2)
-		copy(b, ib[:size2])
-		internString(s, idx)
-		return s
+	// TODO: find a way to intern rune encoding without a temporary buffer
+	// or at least to avoid the second copy
+	var s string
+	var b []byte
+	l := size1 + 3
+	usingInternBuf := l <= strInternMaxLen && (buf == nil || l > len(buf))
+	if !usingInternBuf {
+		s, b = rawstringtmp(buf, l)
+	} else {
+		var _b internBuf // must not escape the stack
+		b = _b[:]
 	}
 
-	s, b := rawstringtmp(buf, size1+3)
+	size2 := 0
 	for _, r := range a {
 		// check for race
 		if size2 >= size1 {
@@ -266,8 +250,11 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 		}
 		size2 += encoderune(b[size2:], r)
 	}
-	s = s[:size2]
-	return s
+
+	if usingInternBuf {
+		return interntmp(b[:size2])
+	}
+	return s[:size2]
 }
 
 type stringStruct struct {
@@ -580,4 +567,15 @@ func stringIsInterned(s string) (string, bool, uintptr) {
 		return is, true, idx
 	}
 	return "", false, idx
+}
+
+func interntmp(b []byte) string {
+	s, interned, idx := stringIsInterned(slicebytetostringtmp(b))
+	if !interned {
+		var nb []byte
+		s, nb = rawstring(len(b))
+		copy(nb, b)
+		internString(s, idx)
+	}
+	return s
 }
