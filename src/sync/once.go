@@ -32,11 +32,14 @@ type Once struct {
 // If f panics, Do considers it to have returned; future calls of Do return
 // without calling f.
 //
+//go:yesinline
 func (o *Once) Do(f func()) {
-	if atomic.LoadUint32(&o.done) == 1 {
-		return
+	if atomic.LoadUint32(&o.done) == 0 {
+		o.doSlow(f)
 	}
-	// Slow-path.
+}
+
+func (o *Once) doSlow(f func()) {
 	o.m.Lock()
 	defer o.m.Unlock()
 	if o.done == 0 {

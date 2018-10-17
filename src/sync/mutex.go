@@ -69,6 +69,7 @@ const (
 // Lock locks m.
 // If the lock is already in use, the calling goroutine
 // blocks until the mutex is available.
+//go:yesinline
 func (m *Mutex) Lock() {
 	// Fast path: grab unlocked mutex.
 	if atomic.CompareAndSwapInt32(&m.state, 0, mutexLocked) {
@@ -78,6 +79,10 @@ func (m *Mutex) Lock() {
 		return
 	}
 
+	m.lockSlow()
+}
+
+func (m *Mutex) lockSlow() {
 	var waitStartTime int64
 	starving := false
 	awoke := false
@@ -172,6 +177,7 @@ func (m *Mutex) Lock() {
 // A locked Mutex is not associated with a particular goroutine.
 // It is allowed for one goroutine to lock a Mutex and then
 // arrange for another goroutine to unlock it.
+//go:yesinline
 func (m *Mutex) Unlock() {
 	if race.Enabled {
 		_ = m.state
@@ -180,6 +186,14 @@ func (m *Mutex) Unlock() {
 
 	// Fast path: drop lock bit.
 	new := atomic.AddInt32(&m.state, -mutexLocked)
+	if (new+mutexLocked)&mutexLocked != 0 && new&mutexStarving == 0 && new>>mutexWaiterShift == 0 && new&(mutexLocked|mutexWoken|mutexStarving) != 0 {
+		return
+	}
+
+	m.unlockSlow(new)
+}
+
+func (m *Mutex) unlockSlow(new int32) {
 	if (new+mutexLocked)&mutexLocked == 0 {
 		throw("sync: unlock of unlocked mutex")
 	}

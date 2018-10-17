@@ -115,6 +115,7 @@ func makechan(t *chantype, size int) *hchan {
 }
 
 // chanbuf(c, i) is pointer to the i'th slot in the buffer.
+//go:yesinline
 func chanbuf(c *hchan, i uint) unsafe.Pointer {
 	return add(c.buf, uintptr(i)*uintptr(c.elemsize))
 }
@@ -137,6 +138,7 @@ func chansend1(c *hchan, elem unsafe.Pointer) {
  * been closed.  it is easiest to loop and re-run
  * the operation; we'll see that it's now closed.
  */
+//go:yesinline
 func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	if c == nil {
 		if !block {
@@ -173,6 +175,10 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		return false
 	}
 
+	return chansendslow(c, ep, block, callerpc)
+}
+
+func chansendslow(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	var t0 int64
 	if blockprofilerate > 0 {
 		t0 = cputicks()
@@ -306,7 +312,7 @@ func send(c *hchan, sg *sudog, ep unsafe.Pointer, unlockf func(), skip int) {
 // typedmemmove will call bulkBarrierPreWrite, but the target bytes
 // are not in the heap, so that will not help. We arrange to call
 // memmove and typeBitsBulkBarrier instead.
-
+//go:yesinline
 func sendDirect(t *_type, sg *sudog, src unsafe.Pointer) {
 	// src is on our stack, dst is a slot on another stack.
 
@@ -320,6 +326,7 @@ func sendDirect(t *_type, sg *sudog, src unsafe.Pointer) {
 	memmove(dst, src, t.size)
 }
 
+//go:yesinline
 func recvDirect(t *_type, sg *sudog, dst unsafe.Pointer) {
 	// dst is on our stack or the heap, src is on another stack.
 	// The channel is locked, so src will not move during this
@@ -416,6 +423,7 @@ func chanrecv2(c *hchan, elem unsafe.Pointer) (received bool) {
 // Otherwise, if c is closed, zeros *ep and returns (true, false).
 // Otherwise, fills in *ep with an element and returns (true, true).
 // A non-nil ep must point to the heap or the caller's stack.
+//go:yesinline
 func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
 	// raceenabled: don't need to check ep, as it is always on the stack
 	// or is new memory allocated by reflect.
@@ -450,6 +458,10 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 		return
 	}
 
+	return chanrecvslow(c, ep, block)
+}
+
+func chanrecvslow(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool) {
 	var t0 int64
 	if blockprofilerate > 0 {
 		t0 = cputicks()

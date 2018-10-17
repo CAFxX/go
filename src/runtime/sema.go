@@ -91,6 +91,7 @@ const (
 )
 
 // Called from runtime.
+//go:yesinline
 func semacquire(addr *uint32) {
 	semacquire1(addr, false, 0)
 }
@@ -152,6 +153,7 @@ func semacquire1(addr *uint32, lifo bool, profile semaProfileFlags) {
 	releaseSudog(s)
 }
 
+//go:yesinline
 func semrelease(addr *uint32) {
 	semrelease1(addr, false)
 }

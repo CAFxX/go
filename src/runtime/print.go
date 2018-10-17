@@ -98,10 +98,12 @@ func gwrite(b []byte) {
 	gp.writebuf = gp.writebuf[:len(gp.writebuf)+n]
 }
 
+//go:yesinline
 func printsp() {
 	printstring(" ")
 }
 
+//go:yesinline
 func printnl() {
 	printstring("\n")
 }
@@ -229,10 +231,12 @@ func printhex(v uint64) {
 	gwrite(buf[i:])
 }
 
+//go:yesinline
 func printpointer(p unsafe.Pointer) {
 	printhex(uint64(uintptr(p)))
 }
 
+//go:yesinline
 func printstring(s string) {
 	gwrite(bytes(s))
 }

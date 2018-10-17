@@ -93,6 +93,7 @@ func aeshash32(p unsafe.Pointer, h uintptr) uintptr
 func aeshash64(p unsafe.Pointer, h uintptr) uintptr
 func aeshashstr(p unsafe.Pointer, h uintptr) uintptr
 
+//go:yesinline
 func strhash(a unsafe.Pointer, h uintptr) uintptr {
 	x := (*stringStruct)(a)
 	return memhash(x.str, h, uintptr(x.len))

@@ -85,6 +85,7 @@ func poolRaceAddr(x interface{}) unsafe.Pointer {
 }
 
 // Put adds x to the pool.
+//go:yesinline
 func (p *Pool) Put(x interface{}) {
 	if x == nil {
 		return
@@ -97,20 +98,25 @@ func (p *Pool) Put(x interface{}) {
 		race.ReleaseMerge(poolRaceAddr(x))
 		race.Disable()
 	}
-	l := p.pin()
+	l, _ := p.pin()
 	if l.private == nil {
 		l.private = x
 		x = nil
 	}
 	runtime_procUnpin()
 	if x != nil {
-		l.Lock()
-		l.shared = append(l.shared, x)
-		l.Unlock()
+		p.putSlow(x, l)
 	}
 	if race.Enabled {
 		race.Enable()
 	}
+}
+
+//go:noinline
+func (p *Pool) putSlow(x interface{}, l *poolLocal) {
+	l.Lock()
+	l.shared = append(l.shared, x)
+	l.Unlock()
 }
 
 // Get selects an arbitrary item from the Pool, removes it from the
@@ -121,25 +127,17 @@ func (p *Pool) Put(x interface{}) {
 //
 // If Get would otherwise return nil and p.New is non-nil, Get returns
 // the result of calling p.New.
+//go:yesinline
 func (p *Pool) Get() interface{} {
 	if race.Enabled {
 		race.Disable()
 	}
-	l := p.pin()
+	l, pid := p.pin()
 	x := l.private
 	l.private = nil
 	runtime_procUnpin()
 	if x == nil {
-		l.Lock()
-		last := len(l.shared) - 1
-		if last >= 0 {
-			x = l.shared[last]
-			l.shared = l.shared[:last]
-		}
-		l.Unlock()
-		if x == nil {
-			x = p.getSlow()
-		}
+		x = p.getSlow(pid)
 	}
 	if race.Enabled {
 		race.Enable()
@@ -153,15 +151,12 @@ func (p *Pool) Get() interface{} {
 	return x
 }
 
-func (p *Pool) getSlow() (x interface{}) {
+func (p *Pool) getSlow(pid int) (x interface{}) {
 	// See the comment in pin regarding ordering of the loads.
 	size := atomic.LoadUintptr(&p.localSize) // load-acquire
 	local := p.local                         // load-consume
-	// Try to steal one element from other procs.
-	pid := runtime_procPin()
-	runtime_procUnpin()
 	for i := 0; i < int(size); i++ {
-		l := indexLocal(local, (pid+i+1)%int(size))
+		l := indexLocal(local, (pid+i)%int(size))
 		l.Lock()
 		last := len(l.shared) - 1
 		if last >= 0 {
@@ -177,7 +172,8 @@ func (p *Pool) getSlow() (x interface{}) {
 
 // pin pins the current goroutine to P, disables preemption and returns poolLocal pool for the P.
 // Caller must call runtime_procUnpin() when done with the pool.
-func (p *Pool) pin() *poolLocal {
+//go:yesinline
+func (p *Pool) pin() (*poolLocal, int) {
 	pid := runtime_procPin()
 	// In pinSlow we store to localSize and then to local, here we load in opposite order.
 	// Since we've disabled preemption, GC cannot happen in between.
@@ -186,9 +182,9 @@ func (p *Pool) pin() *poolLocal {
 	s := atomic.LoadUintptr(&p.localSize) // load-acquire
 	l := p.local                          // load-consume
 	if uintptr(pid) < s {
-		return indexLocal(l, pid)
+		return indexLocal(l, pid), pid
 	}
-	return p.pinSlow()
+	return p.pinSlow(), pid
 }
 
 func (p *Pool) pinSlow() *poolLocal {
