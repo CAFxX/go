@@ -102,6 +102,7 @@ func decoderune(s string, k int) (r rune, pos int) {
 // encoderune writes into p (which must be large enough) the UTF-8 encoding of the rune.
 // It returns the number of bytes written.
 // TODO: this duplicates utf8.EncodeRune, should it be deduped?
+//go:yesinline
 func encoderune(p []byte, r rune) int {
 	// Negative values are erroneous. Making it unsigned addresses the problem.
 	switch i := uint32(r); {
