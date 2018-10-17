@@ -35,6 +35,8 @@ const (
 	Norace                       // func must not have race detector annotations
 	Nosplit                      // func should not execute on separate stack
 	Noinline                     // func should not be inlined
+	Yesinline                    // func should be inlined if possible
+	Mustinline                   // func must be inlined
 	CgoUnsafeArgs                // treat a pointer to one arg as a pointer to them all
 	UintptrEscapes               // pointers converted to uintptr escape
 
@@ -63,6 +65,10 @@ func pragmaValue(verb string) syntax.Pragma {
 		return Nosplit
 	case "go:noinline":
 		return Noinline
+	case "go:yesinline":
+		return Yesinline
+	case "go:mustinline":
+		return Mustinline
 	case "go:systemstack":
 		return Systemstack
 	case "go:nowritebarrier":

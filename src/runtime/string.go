@@ -115,6 +115,7 @@ func stringDataOnStack(s string) bool {
 	return stk.lo <= ptr && ptr < stk.hi
 }
 
+//go:yesinline
 func rawstringtmp(buf *tmpBuf, l int) (s string, b []byte) {
 	if buf != nil && l <= len(buf) {
 		b = buf[:l]

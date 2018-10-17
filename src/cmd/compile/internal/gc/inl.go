@@ -126,6 +126,13 @@ func caninl(fn *Node) {
 			}
 		}()
 	}
+	if fn.Func.Pragma&Mustinline != 0 {
+		defer func() {
+			if reason != "" {
+				Fatalf("cannot inline mustinline func %v: %s\n", fn.Func.Nname, reason)
+			}
+		}()
+	}
 
 	// If marked "go:noinline", don't inline
 	if fn.Func.Pragma&Noinline != 0 {
@@ -176,6 +183,12 @@ func caninl(fn *Node) {
 		cc = 1 // this appears to yield better performance than 0.
 	}
 
+	// If marked "go:yesinline", give "unlimited" inline budget
+	inlineBudget := int32(inlineMaxBudget)
+	if fn.Func.Pragma&Yesinline != 0 {
+		inlineBudget = int32(^uint32(0) >> 1)
+	}
+
 	// At this point in the game the function we're looking at may
 	// have "stale" autos, vars that still appear in the Dcl list, but
 	// which no longer have any uses in the function body (due to
@@ -186,7 +199,7 @@ func caninl(fn *Node) {
 	// list. See issue 25249 for more context.
 
 	visitor := hairyVisitor{
-		budget:        inlineMaxBudget,
+		budget:        inlineBudget,
 		extraCallCost: cc,
 		usedLocals:    make(map[*Node]bool),
 	}
@@ -194,13 +207,17 @@ func caninl(fn *Node) {
 		reason = visitor.reason
 		return
 	}
-	if visitor.budget < 0 {
-		reason = fmt.Sprintf("function too complex: cost %d exceeds budget %d", inlineMaxBudget-visitor.budget, inlineMaxBudget)
+
+	cost := inlineBudget - visitor.budget
+	if fn.Func.Pragma&(Yesinline) != 0 {
+		cost = 0
+	} else if visitor.budget < 0 {
+		reason = fmt.Sprintf("function too complex: cost %d exceeds budget %d", cost, inlineBudget)
 		return
 	}
 
 	n.Func.Inl = &Inline{
-		Cost: inlineMaxBudget - visitor.budget,
+		Cost: cost,
 		Dcl:  inlcopylist(pruneUnusedAutos(n.Name.Defn.Func.Dcl, &visitor)),
 		Body: inlcopylist(fn.Nbody.Slice()),
 	}
