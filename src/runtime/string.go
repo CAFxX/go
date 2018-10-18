@@ -51,7 +51,7 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	// or at least to avoid the second copy
 	var s string
 	var b []byte
-	usingInternBuf := l <= strInternMaxLen && (buf == nil || l > len(buf))
+	usingInternBuf := interningAllowed(l) && (buf == nil || l > len(buf))
 	if !usingInternBuf {
 		s, b = rawstringtmp(buf, l)
 	} else {
@@ -115,7 +115,7 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 	}
 
 	usingBuf := buf != nil && l <= len(buf)
-	tryIntern := l <= strInternMaxLen && !usingBuf
+	tryIntern := interningAllowed(l) && !usingBuf
 
 	var idx uintptr
 	if tryIntern {
@@ -244,7 +244,7 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 	var s string
 	var b []byte
 	l := size1 + 3
-	usingInternBuf := l <= strInternMaxLen && (buf == nil || l > len(buf))
+	usingInternBuf := interningAllowed(l) && (buf == nil || l > len(buf))
 	if !usingInternBuf {
 		s, b = rawstringtmp(buf, l)
 	} else {
@@ -551,7 +551,8 @@ func gostringw(strw *uint16) string {
 // fixed in size collisions are likely: when a collision happens the old string is
 // replaced with the new one; this means that when checking for presence we have
 // to compare the whole string in addition to the hash. To bound the resulting
-// overhead automatic interning is performed on small strings (<strInternMaxLen).
+// overhead automatic interning is only performed on small strings (<strInternMaxLen)
+// and it is disabled automatically if the hit ratio is too low.
 // TODO: Move most string interning to the concurrent GC mark phase.
 // TODO: Expose APIs to perform on-demand interning.
 // TODO: Tune strInternMaxLen and the size of the per-P tables.
@@ -561,8 +562,7 @@ func gostringw(strw *uint16) string {
 //       in the functions above and allow the early return in stringIsInterned to
 //       be inlined.
 // TODO: Deal with table thrashing due to excessive number of unique strings (e.g.
-//       by either dynamically disabling interning or dynamically increasing the
-//       per-P table sizes)
+//       by dynamically increasing the per-P table sizes)
 // TODO: Deal with table thrashing due to hash collisions of frequent strings with
 //       infrequent ones (e.g. by storing a 1-3 bit "hit" counter per entry)
 
@@ -571,9 +571,6 @@ const strInternMaxLen = 64 // (arbitrary) maximum length of string to be conside
 type internBuf [strInternMaxLen]byte
 
 func internString(s string, idx uintptr) {
-	if len(s) > strInternMaxLen {
-		return
-	}
 	// Note that because we're not pinned, we may be writing to the table of
 	// a different P or otherwise with a different seed (because GC happened
 	// in the meanwhile): while writes in such a situation will degrade the
@@ -584,22 +581,26 @@ func internString(s string, idx uintptr) {
 
 func stringIsInterned(s string) (string, bool, uintptr) {
 	ps := (*stringStruct)(noescape(unsafe.Pointer(&s)))
-	if ps.len > strInternMaxLen {
-		return "", false, 0
-	}
 
 	procPin()
 	_p_ := getg().m.p.ptr()
 	hash := memhash(ps.str, _p_.strInternSeed, uintptr(ps.len))
 	idx := hash % uintptr(len(_p_.strInternTable))
 	is := _p_.strInternTable[idx]
-	procUnpin()
 
+	interned := false
 	pis := (*stringStruct)(unsafe.Pointer(&is))
 	if pis.len == ps.len && memequal(pis.str, ps.str, uintptr(ps.len)) {
-		return is, true, idx
+		_p_.strInternHits++
+		interned = true
+	} else if is != "" {
+		is = ""
+		// eviction actually happens in internString
+		_p_.strInternEvicts++
 	}
-	return "", false, idx
+	procUnpin()
+
+	return is, interned, idx
 }
 
 func interntmp(b []byte) string {
@@ -611,4 +612,14 @@ func interntmp(b []byte) string {
 		internString(s, idx)
 	}
 	return s
+}
+
+func interningAllowed(l int) bool {
+	if l > strInternMaxLen || l <= 0 {
+		return false
+	}
+	if _p_ := getg().m.p.ptr(); _p_.strInternHits < _p_.strInternEvicts {
+		return false
+	}
+	return true
 }

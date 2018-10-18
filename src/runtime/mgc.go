@@ -2048,6 +2048,8 @@ func clearpools() {
 			p.strInternTable[i] = ""
 		}
 		p.strInternSeed = uintptr(fastrand())
+		p.strInternEvicts = 0
+		p.strInternHits = 0
 	}
 
 	// Clear central sudog cache.
