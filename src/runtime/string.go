@@ -561,6 +561,11 @@ func gostringw(strw *uint16) string {
 // TODO: Once midstack inlining works deduplicate the checks for strInternMaxLen
 //       in the functions above and allow the early return in stringIsInterned to
 //       be inlined.
+// TODO: Deal with table thrashing due to excessive number of unique strings (e.g.
+//       by either dynamically disabling interning or dynamically increasing the
+//       per-P table sizes)
+// TODO: Deal with table thrashing due to hash collisions of frequent strings with
+//       infrequent ones (e.g. by storing a 1-3 bit "hit" counter per entry)
 
 const strInternMaxLen = 64 // (arbitrary) maximum length of string to be considered for interning
 
