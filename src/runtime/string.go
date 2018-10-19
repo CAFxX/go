@@ -561,10 +561,13 @@ func gostringw(strw *uint16) string {
 // TODO: Once midstack inlining works deduplicate the checks for strInternMaxLen
 //       in the functions above and allow the early return in stringIsInterned to
 //       be inlined.
-// TODO: Deal with table thrashing due to excessive number of unique strings (e.g.
-//       by dynamically increasing the per-P table sizes)
 // TODO: Deal with table thrashing due to hash collisions of frequent strings with
 //       infrequent ones (e.g. by storing a 1-3 bit "hit" counter per entry)
+
+const strInternTableMaxLen = 1 << 16 // (arbitrary) maximum size of per-P table
+const strInternTableMinLen = 1 << 8  // (arbitrary) minimum size of per-P table
+
+var strInternTableLen = strInternTableMinLen
 
 const strInternMaxLen = 64 // (arbitrary) maximum length of string to be considered for interning
 
@@ -576,16 +579,33 @@ func internString(s string, idx uintptr) {
 	// in the meanwhile): while writes in such a situation will degrade the
 	// effectiveness of the per-P table, they don't pose correctness issues
 	// because stringIsInterned needs to check the strings for equality.
-	getg().m.p.ptr().strInternTable[idx] = s
+	// Additionally, since it is possible for the interning table to change
+	// size, we simply skip updating the table if it's clear the table has
+	// shrunk.
+	procPin()
+	_p_ := getg().m.p.ptr()
+	if idx < uintptr(len(_p_.strInternTable)) {
+		if _p_.strInternTable[idx] != "" {
+			_p_.strInternEvicts++
+		} else {
+			_p_.strInternCount++
+		}
+		_p_.strInternTable[idx] = s
+	}
+	procUnpin()
 }
 
 func stringIsInterned(s string) (string, bool, uintptr) {
-	ps := (*stringStruct)(noescape(unsafe.Pointer(&s)))
-
 	procPin()
 	_p_ := getg().m.p.ptr()
+
+	if _p_.strInternTable == nil {
+		_p_.strInternTable = make([]string, strInternTableLen)
+	}
+
+	ps := (*stringStruct)(noescape(unsafe.Pointer(&s)))
 	hash := memhash(ps.str, _p_.strInternSeed, uintptr(ps.len))
-	idx := hash % uintptr(len(_p_.strInternTable))
+	idx := hashReduce(hash, uintptr(len(_p_.strInternTable)))
 	is := _p_.strInternTable[idx]
 
 	interned := false
@@ -595,12 +615,16 @@ func stringIsInterned(s string) (string, bool, uintptr) {
 		interned = true
 	} else if is != "" {
 		is = ""
-		// eviction actually happens in internString
-		_p_.strInternEvicts++
 	}
+
 	procUnpin()
 
 	return is, interned, idx
+}
+
+func hashReduce(h uintptr, N uintptr) uintptr {
+	_h, _N := uint64(h&0xFFFFFFFF), uint64(N&0xFFFFFFFF)
+	return uintptr((_h * _N) >> 32)
 }
 
 func interntmp(b []byte) string {

@@ -549,10 +549,11 @@ type p struct {
 	runSafePointFn uint32 // if 1, run sched.safePointFn at next safe point
 
 	// per-P string interning table (see string.go)
-	strInternTable  [1 << 10]string // table (power-of-2 for fast modulo)
-	strInternSeed   uintptr         // seed used during hashing
-	strInternHits   uint            // number of positive hits (string already in table)
-	strInternEvicts uint            // number of evictions (hash collisions with other strings)
+	strInternTable  []string // table
+	strInternSeed   uintptr  // seed used during hashing
+	strInternHits   uint     // number of positive hits (string already in table)
+	strInternEvicts uint     // number of evictions (hash collisions with other strings)
+	strInternCount  uint     // number of strings in the table
 
 	pad cpu.CacheLinePad
 }
