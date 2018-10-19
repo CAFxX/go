@@ -51,12 +51,12 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	// or at least to avoid the second copy
 	var s string
 	var b []byte
-	usingInternBuf := interningAllowed(l) && (buf == nil || l > len(buf))
-	if !usingInternBuf {
-		s, b = rawstringtmp(buf, l)
-	} else {
+	usingInternBuf := (buf == nil || l > len(buf)) && interningAllowed(l)
+	if usingInternBuf {
 		var _b internBuf // must not escape the stack
 		b = _b[:l]
+	} else {
+		s, b = rawstringtmp(buf, l)
 	}
 
 	sz := 0
@@ -115,7 +115,7 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 	}
 
 	usingBuf := buf != nil && l <= len(buf)
-	tryIntern := interningAllowed(l) && !usingBuf
+	tryIntern := !usingBuf && interningAllowed(l)
 
 	var idx uintptr
 	if tryIntern {
@@ -244,12 +244,12 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 	var s string
 	var b []byte
 	l := size1 + 3
-	usingInternBuf := interningAllowed(l) && (buf == nil || l > len(buf))
-	if !usingInternBuf {
-		s, b = rawstringtmp(buf, l)
-	} else {
+	usingInternBuf := (buf == nil || l > len(buf)) && interningAllowed(l)
+	if usingInternBuf {
 		var _b internBuf // must not escape the stack
 		b = _b[:]
+	} else {
+		s, b = rawstringtmp(buf, l)
 	}
 
 	size2 := 0
