@@ -639,6 +639,9 @@ func interntmp(b []byte) string {
 }
 
 func interningAllowed(l int) bool {
+	if debug.stringintern == 0 {
+		return false
+	}
 	if l > strInternMaxLen || l <= 0 {
 		return false
 	}
