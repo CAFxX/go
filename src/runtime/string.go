@@ -573,28 +573,6 @@ const strInternMaxLen = 64 // (arbitrary) maximum length of string to be conside
 
 type internBuf [strInternMaxLen]byte
 
-func internString(s string, idx uintptr) {
-	// Note that because we're not pinned, we may be writing to the table of
-	// a different P or otherwise with a different seed (because GC happened
-	// in the meanwhile): while writes in such a situation will degrade the
-	// effectiveness of the per-P table, they don't pose correctness issues
-	// because stringIsInterned needs to check the strings for equality.
-	// Additionally, since it is possible for the interning table to change
-	// size, we simply skip updating the table if it's clear the table has
-	// shrunk.
-	procPin()
-	_p_ := getg().m.p.ptr()
-	if idx < uintptr(len(_p_.strInternTable)) {
-		if _p_.strInternTable[idx] != "" {
-			_p_.strInternEvicts++
-		} else {
-			_p_.strInternCount++
-		}
-		_p_.strInternTable[idx] = s
-	}
-	procUnpin()
-}
-
 func stringIsInterned(s string) (string, bool, uintptr) {
 	procPin()
 	_p_ := getg().m.p.ptr()
@@ -622,9 +600,26 @@ func stringIsInterned(s string) (string, bool, uintptr) {
 	return is, interned, idx
 }
 
-func hashReduce(h uintptr, N uintptr) uintptr {
-	_h, _N := uint64(h&0xFFFFFFFF), uint64(N&0xFFFFFFFF)
-	return uintptr((_h * _N) >> 32)
+func internString(s string, idx uintptr) {
+	// Note that because we're not pinned, we may be writing to the table of
+	// a different P or otherwise with a different seed (because GC happened
+	// in the meanwhile): while writes in such a situation will degrade the
+	// effectiveness of the per-P table, they don't pose correctness issues
+	// because stringIsInterned needs to check the strings for equality.
+	// Additionally, since it is possible for the interning table to change
+	// size, we simply skip updating the table if it's clear the table has
+	// shrunk.
+	procPin()
+	_p_ := getg().m.p.ptr()
+	if idx < uintptr(len(_p_.strInternTable)) {
+		if _p_.strInternTable[idx] != "" {
+			_p_.strInternEvicts++
+		} else {
+			_p_.strInternCount++
+		}
+		_p_.strInternTable[idx] = s
+	}
+	procUnpin()
 }
 
 func interntmp(b []byte) string {
@@ -649,4 +644,51 @@ func interningAllowed(l int) bool {
 		return false
 	}
 	return true
+}
+
+func hashReduce(h uintptr, N uintptr) uintptr {
+	_h, _N := uint64(h&0xFFFFFFFF), uint64(N&0xFFFFFFFF)
+	return uintptr((_h * _N) >> 32)
+}
+
+// This function is called with the world stopped, at the beginning of a garbage collection.
+// It must not allocate and probably should not call any runtime functions.
+//go:nosplit
+func clearinterningtables() {
+	var hits, evicts, count uint
+
+	for _, p := range allp {
+		evicts += p.strInternEvicts
+		hits += p.strInternHits
+		count += p.strInternCount
+	}
+
+	resizing := false
+	if evicts > hits/3 {
+		strInternTableLen *= 2
+		if strInternTableLen > strInternTableMaxLen {
+			strInternTableLen = strInternTableMaxLen
+		}
+		resizing = true
+	} else if count < uint(len(allp)*strInternTableLen/3) {
+		strInternTableLen /= 2
+		if strInternTableLen < strInternTableMinLen {
+			strInternTableLen = strInternTableMinLen
+		}
+		resizing = true
+	}
+
+	for _, p := range allp {
+		if resizing {
+			p.strInternTable = nil
+		} else {
+			for i := range p.strInternTable {
+				p.strInternTable[i] = ""
+			}
+		}
+		p.strInternSeed = uintptr(fastrand())
+		p.strInternEvicts = 0
+		p.strInternHits = 0
+		p.strInternCount = 0
+	}
 }

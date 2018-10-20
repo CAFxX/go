@@ -2043,42 +2043,7 @@ func clearpools() {
 	}
 
 	// clear per-P string interning tables
-	var hits, evicts, count uint
-	for _, p := range allp {
-		for i := range p.strInternTable {
-			p.strInternTable[i] = ""
-		}
-		evicts += p.strInternEvicts
-		hits += p.strInternHits
-		count += p.strInternCount
-		p.strInternSeed = uintptr(fastrand())
-		p.strInternEvicts = 0
-		p.strInternHits = 0
-		p.strInternCount = 0
-	}
-	resizing := false
-	if evicts > hits/3 {
-		strInternTableLen *= 2
-		if strInternTableLen > strInternTableMaxLen {
-			strInternTableLen = strInternTableMaxLen
-		}
-		resizing = true
-	} else if count < uint(len(allp)*strInternTableLen/3) {
-		strInternTableLen /= 2
-		if strInternTableLen < strInternTableMinLen {
-			strInternTableLen = strInternTableMinLen
-		}
-		resizing = true
-	}
-	for _, p := range allp {
-		if resizing {
-			p.strInternTable = nil
-		} else {
-			for i := range p.strInternTable {
-				p.strInternTable[i] = ""
-			}
-		}
-	}
+	clearinterningtables()
 
 	// Clear central sudog cache.
 	// Leave per-P caches alone, they have strictly bounded size.
