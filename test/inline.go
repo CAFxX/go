@@ -188,3 +188,7 @@ func small5() {
 	// the Unlock fast path should be inlined
 	mutex.Unlock() // ERROR "inlining call to sync\.\(\*Mutex\)\.Unlock" "&sync\.m\.state escapes to heap"
 }
+func small6() { // ERROR "can inline small6"
+	// the Lock fast path should be inlined
+	mutex.Lock() // ERROR "inlining call to sync\.\(\*Mutex\)\.Lock" "&sync\.m\.state escapes to heap"
+}

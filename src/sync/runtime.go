@@ -15,7 +15,7 @@ func runtime_Semacquire(s *uint32)
 
 // SemacquireMutex is like Semacquire, but for profiling contended Mutexes.
 // If lifo is true, queue waiter at the head of wait queue.
-func runtime_SemacquireMutex(s *uint32, lifo bool)
+func runtime_SemacquireMutex(s *uint32, lifo bool, skipframes int)
 
 // Semrelease atomically increments *s and notifies a waiting goroutine
 // if one is blocked in Semacquire.
