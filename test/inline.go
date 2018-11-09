@@ -12,6 +12,7 @@ package foo
 import (
 	"errors"
 	"runtime"
+	"sync"
 	"unsafe"
 )
 
@@ -179,4 +180,11 @@ func small4(t T) { // not inlineable - has 2 calls.
 func (T) meth2(int, int) { // not inlineable - has 2 calls.
 	runtime.GC()
 	runtime.GC()
+}
+
+var mutex *sync.Mutex
+
+func small5() {
+	// the Unlock fast path should be inlined
+	mutex.Unlock() // ERROR "inlining call to sync\.\(\*Mutex\)\.Unlock" "&sync\.m\.state escapes to heap"
 }
