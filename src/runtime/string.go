@@ -117,11 +117,10 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 	usingBuf := buf != nil && l <= len(buf)
 	tryIntern := !usingBuf && interningAllowed(l)
 
-	var idx uintptr
+	var idx, off, N uintptr
 	if tryIntern {
-		var interned bool
-		str, interned, idx = stringIsInterned(slicebytetostringtmp(b))
-		if interned {
+		str, idx, off, N = stringIsInterned(slicebytetostringtmp(b))
+		if str != "" {
 			return
 		}
 	}
@@ -138,7 +137,7 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 	memmove(p, (*(*slice)(unsafe.Pointer(&b))).array, uintptr(l))
 
 	if tryIntern {
-		internString(str, idx)
+		internString(str, idx, off, N)
 	}
 
 	return
@@ -563,72 +562,92 @@ func gostringw(strw *uint16) string {
 //       be inlined.
 // TODO: Deal with table thrashing due to hash collisions of frequent strings with
 //       infrequent ones (e.g. by storing a 1-3 bit "hit" counter per entry)
+// TODO: "Compress" the interning tables. Currently every entry is a string, using 16
+//       bytes per entry on 64 bit platforms. It should be possible to compress this
+//       to 8 bytes (stuffing the length bits inside the byte pointer to the string)
+//       or even less (if we have max N strings of len M, the maximum number of bytes
+//       we need to address is N*M, so e.g. N=2^16 and M=64, we don't need more than
+//       log2(2^16*64)=22 bit to address the strings, and log2(M)=6 bit to store the
+//       the string length, i.e. we need 28 bits - that fit in 4 bytes). Since the
+//       tables are cleared during GC and anyway they are not supposed to keep the
+//       strings alive, compressing the tables won't even require the GC to be aware
+//       of the "compressed pointers".
+// TODO: Store a computed string hash in the string itself, and use that to speed up
+//       table lookup.
 
-const strInternTableMaxLen = 1 << 16 // (arbitrary) maximum size of per-P table
-const strInternTableMinLen = 1 << 8  // (arbitrary) minimum size of per-P table
+const (
+	strInternTableMaxLen = 16 // (arbitrary) maximum size of per-P table (power of 2)
+	strInternTableMinLen = 8  // (arbitrary) minimum size of per-P table (power of 2)
+	strInternMaxLen      = 64 // (arbitrary) maximum length of string to be considered for interning
+	strInternProbes      = 2  // (arbitrary) maximum number of alternative slots to visit
+)
 
 var strInternTableLen = strInternTableMinLen
 
-const strInternMaxLen = 64 // (arbitrary) maximum length of string to be considered for interning
-
 type internBuf [strInternMaxLen]byte
 
-func stringIsInterned(s string) (string, bool, uintptr) {
+func stringIsInterned(s string) (string, uintptr, uintptr, uintptr) {
 	procPin()
 	_p_ := getg().m.p.ptr()
 
 	if _p_.strInternTable == nil {
-		_p_.strInternTable = make([]string, strInternTableLen)
+		_p_.strInternTable = make([]string, interntablesize())
 	}
 
 	ps := (*stringStruct)(noescape(unsafe.Pointer(&s)))
 	hash := memhash(ps.str, _p_.strInternSeed, uintptr(ps.len))
-	idx := hashReduce(hash, uintptr(len(_p_.strInternTable)))
-	is := _p_.strInternTable[idx]
+	N := uintptr(len(_p_.strInternTable))
+	idx, off := hashReduce(hash, N)
 
-	interned := false
-	pis := (*stringStruct)(unsafe.Pointer(&is))
-	if pis.len == ps.len && memequal(pis.str, ps.str, uintptr(ps.len)) {
-		_p_.strInternHits++
-		interned = true
-	} else if is != "" {
-		is = ""
+	for i, _idx := 0, idx; i < strInternProbes; i, _idx = i+1, hashNext(_idx, off, N) {
+		is := _p_.strInternTable[_idx]
+		pis := (*stringStruct)(unsafe.Pointer(&is))
+		if pis.len == ps.len && memequal(pis.str, ps.str, uintptr(ps.len)) {
+			_p_.strInternHits++
+			procUnpin()
+			return is, idx, off, N
+		}
 	}
 
 	procUnpin()
-
-	return is, interned, idx
+	return "", idx, off, N
 }
 
-func internString(s string, idx uintptr) {
+func internString(s string, idx, off, N uintptr) {
 	// Note that because we're not pinned, we may be writing to the table of
 	// a different P or otherwise with a different seed (because GC happened
 	// in the meanwhile): while writes in such a situation will degrade the
 	// effectiveness of the per-P table, they don't pose correctness issues
 	// because stringIsInterned needs to check the strings for equality.
 	// Additionally, since it is possible for the interning table to change
-	// size, we simply skip updating the table if it's clear the table has
-	// shrunk.
+	// size, we simply skip updating the table if it's clear the size of the
+	// table has changed.
 	procPin()
 	_p_ := getg().m.p.ptr()
-	if idx < uintptr(len(_p_.strInternTable)) {
-		if _p_.strInternTable[idx] != "" {
-			_p_.strInternEvicts++
-		} else {
-			_p_.strInternCount++
+	for i, _idx := 0, idx; i < strInternProbes; i, _idx = i+1, hashNext(_idx, off, N) {
+		if _idx >= uintptr(len(_p_.strInternTable)) {
+			// the size of the table has clearly changed: skip updating it
+			goto unpin
 		}
-		_p_.strInternTable[idx] = s
+		if _p_.strInternTable[_idx] == "" {
+			_p_.strInternTable[_idx] = s
+			_p_.strInternCount++
+			goto unpin
+		}
 	}
+	_p_.strInternTable[idx] = s
+	_p_.strInternEvicts++
+unpin:
 	procUnpin()
 }
 
 func interntmp(b []byte) string {
-	s, interned, idx := stringIsInterned(slicebytetostringtmp(b))
-	if !interned {
+	s, idx, off, N := stringIsInterned(slicebytetostringtmp(b))
+	if s == "" {
 		var nb []byte
 		s, nb = rawstring(len(b))
 		copy(nb, b)
-		internString(s, idx)
+		internString(s, idx, off, N)
 	}
 	return s
 }
@@ -646,9 +665,22 @@ func interningAllowed(l int) bool {
 	return true
 }
 
-func hashReduce(h uintptr, N uintptr) uintptr {
-	_h, _N := uint64(h&0xFFFFFFFF), uint64(N&0xFFFFFFFF)
-	return uintptr((_h * _N) >> 32)
+func hashReduce(h uintptr, N uintptr) (idx, off uintptr) {
+	//h = (h * 11400714819323198485) ^ ((h >> 32) * 11400714819323198485)
+	off = ((h / N) % N) | 1
+	//off = uintptr(fastreduce(h, uint32(N))) | 1
+	idx = hashNext(h, off, N)
+	return
+}
+
+func hashNext(idx, off, N uintptr) uintptr {
+	return (idx + off) % N
+	//return uintptr(fastreduce(idx+off, uint32(N)))
+}
+
+func fastreduce(h uintptr, N uint32) uint32 {
+	_h := (uint64(h) * 11400714819323198485) >> 32
+	return uint32((_h * uint64(N)) >> 32)
 }
 
 // This function is called with the world stopped, at the beginning of a garbage collection.
@@ -661,34 +693,63 @@ func clearinterningtables() {
 		evicts += p.strInternEvicts
 		hits += p.strInternHits
 		count += p.strInternCount
-	}
-
-	resizing := false
-	if evicts > hits/3 {
-		strInternTableLen *= 2
-		if strInternTableLen > strInternTableMaxLen {
-			strInternTableLen = strInternTableMaxLen
-		}
-		resizing = true
-	} else if count < uint(len(allp)*strInternTableLen/3) {
-		strInternTableLen /= 2
-		if strInternTableLen < strInternTableMinLen {
-			strInternTableLen = strInternTableMinLen
-		}
-		resizing = true
-	}
-
-	for _, p := range allp {
-		if resizing {
-			p.strInternTable = nil
-		} else {
-			for i := range p.strInternTable {
-				p.strInternTable[i] = ""
-			}
-		}
-		p.strInternSeed = uintptr(fastrand())
+		p.strInternTable = nil
+		p.strInternSeed = internseed()
 		p.strInternEvicts = 0
 		p.strInternHits = 0
 		p.strInternCount = 0
 	}
+
+	if debug.gctrace > 0 {
+		l := uint(len(allp)) * interntablesize()
+		printlock()
+		print("intern")
+		if evicts > 0 {
+			print(" hit/evict=", 100*hits/evicts, "%")
+		}
+		print(" count/len=", 100*count/l, "%")
+		print(" hits=", hits)
+		print(" evicts=", evicts)
+		print(" count=", count)
+		print(" len=", l)
+		printnl()
+		printunlock()
+	}
+
+	if evicts > hits/100 {
+		strInternTableLen++
+	} else if count < uint(interntablesize()/10) {
+		strInternTableLen--
+	}
+	strInternTableLen = clamp(strInternTableLen, strInternTableMinLen, strInternTableMaxLen)
+}
+
+func internmem() uint64 {
+	c := uint64(interntablesize())
+	lock(&allpLock)
+	np := uint64(len(allp))
+	unlock(&allpLock)
+	return c * np * uint64(unsafe.Sizeof(stringStruct{}))
+}
+
+func interntablesize() uint {
+	return 1 << uint(strInternTableLen)
+}
+
+func clamp(n, min, max int) int {
+	if min > max {
+		panic("clamp: min greater than max")
+	} else if n < min {
+		n = min
+	} else if n > max {
+		n = max
+	}
+	return n
+}
+
+func internseed() uintptr {
+	if unsafe.Sizeof(uintptr(0)) <= unsafe.Sizeof(uint32(0)) {
+		return uintptr(fastrand())
+	}
+	return (uintptr(fastrand()) << 32) | uintptr(fastrand())
 }

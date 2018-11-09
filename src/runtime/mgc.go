@@ -416,7 +416,7 @@ func (c *gcControllerState) startCycle() {
 
 	// Re-compute the heap goal for this cycle in case something
 	// changed. This is the same calculation we use elsewhere.
-	memstats.next_gc = memstats.heap_marked + memstats.heap_marked*uint64(gcpercent)/100
+	memstats.next_gc = memstats.heap_marked + memstats.heap_marked*uint64(gcpercent)/100 + internmem()
 	if gcpercent < 0 {
 		memstats.next_gc = ^uint64(0)
 	}
