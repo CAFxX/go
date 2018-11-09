@@ -180,4 +180,3 @@ func (T) meth2(int, int) { // not inlineable - has 2 calls.
 	runtime.GC()
 	runtime.GC()
 }
-
