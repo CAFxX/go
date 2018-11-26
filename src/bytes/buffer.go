@@ -107,6 +107,9 @@ func (b *Buffer) Reset() {
 // internal buffer only needs to be resliced.
 // It returns the index where bytes should be written and whether it succeeded.
 func (b *Buffer) tryGrowByReslice(n int) (int, bool) {
+	if b.Len() == 0 && b.off != 0 {
+		b.Reset()
+	}
 	if l := len(b.buf); n <= cap(b.buf)-l {
 		b.buf = b.buf[:l+n]
 		return l, true
@@ -118,11 +121,6 @@ func (b *Buffer) tryGrowByReslice(n int) (int, bool) {
 // It returns the index where bytes should be written.
 // If the buffer can't grow it will panic with ErrTooLarge.
 func (b *Buffer) grow(n int) int {
-	m := b.Len()
-	// If buffer is empty, reset to recover space.
-	if m == 0 && b.off != 0 {
-		b.Reset()
-	}
 	// Try to grow by means of a reslice.
 	if i, ok := b.tryGrowByReslice(n); ok {
 		return i
@@ -132,6 +130,7 @@ func (b *Buffer) grow(n int) int {
 		return 0
 	}
 	c := cap(b.buf)
+	m := b.Len()
 	if n <= c/2-m {
 		// We can slide things down instead of allocating a new
 		// slice. We only need m+n <= c to slide, but
