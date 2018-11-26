@@ -120,11 +120,8 @@ func (b *Buffer) tryGrowByReslice(n int) (int, bool) {
 // grow grows the buffer to guarantee space for n more bytes.
 // It returns the index where bytes should be written.
 // If the buffer can't grow it will panic with ErrTooLarge.
+// Calls to grow should normally be preceded by calls to tryGrowByReslice.
 func (b *Buffer) grow(n int) int {
-	// Try to grow by means of a reslice.
-	if i, ok := b.tryGrowByReslice(n); ok {
-		return i
-	}
 	if b.buf == nil && n <= smallBufferSize {
 		b.buf = make([]byte, n, smallBufferSize)
 		return 0
@@ -160,7 +157,10 @@ func (b *Buffer) Grow(n int) {
 	if n < 0 {
 		panic("bytes.Buffer.Grow: negative count")
 	}
-	m := b.grow(n)
+	m, ok := b.tryGrowByReslice(n)
+	if !ok {
+		m = b.grow(n)
+	}
 	b.buf = b.buf[:m]
 }
 
@@ -201,7 +201,10 @@ const MinRead = 512
 func (b *Buffer) ReadFrom(r io.Reader) (n int64, err error) {
 	b.lastRead = opInvalid
 	for {
-		i := b.grow(MinRead)
+		i, ok := b.tryGrowByReslice(MinRead)
+		if !ok {
+			i = b.grow(MinRead)
+		}
 		b.buf = b.buf[:i]
 		m, e := r.Read(b.buf[i:cap(b.buf)])
 		if m < 0 {
