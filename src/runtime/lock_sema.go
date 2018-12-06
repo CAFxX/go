@@ -43,6 +43,12 @@ func lock(l *mutex) {
 	if atomic.Casuintptr(&l.key, 0, locked) {
 		return
 	}
+
+	// outlined slow path to allow inlining the fast path above
+	lockSlow(l)
+}
+
+func lockSlow(l *mutex) {
 	semacreate(gp.m)
 
 	// On uniprocessor's, no point spinning.

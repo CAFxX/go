@@ -188,8 +188,13 @@ func caninl(fn *Node) {
 	// locals, and we use this map to produce a pruned Inline.Dcl
 	// list. See issue 25249 for more context.
 
+	budget := int32(inlineMaxBudget)
+	if strings.Compare(n.String(), "lock") == 0 {
+		budget = int32(200)
+	}
+
 	visitor := hairyVisitor{
-		budget:        inlineMaxBudget,
+		budget:        budget,
 		extraCallCost: cc,
 		usedLocals:    make(map[*Node]bool),
 	}
@@ -198,14 +203,17 @@ func caninl(fn *Node) {
 		return
 	}
 	if visitor.budget < 0 {
-		reason = fmt.Sprintf("function too complex: cost %d exceeds budget %d", inlineMaxBudget-visitor.budget, inlineMaxBudget)
+		reason = fmt.Sprintf("function too complex: cost %d exceeds budget %d", budget-visitor.budget, budget)
 		return
 	}
 
 	n.Func.Inl = &Inline{
-		Cost: inlineMaxBudget - visitor.budget,
+		Cost: budget - visitor.budget,
 		Dcl:  inlcopylist(pruneUnusedAutos(n.Name.Defn.Func.Dcl, &visitor)),
 		Body: inlcopylist(fn.Nbody.Slice()),
+	}
+	if strings.Compare(n.String(), "lock") == 0 {
+		n.Func.Inl.Cost = 10
 	}
 
 	// hack, TODO, check for better way to link method nodes back to the thing with the ->inl

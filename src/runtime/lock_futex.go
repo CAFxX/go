@@ -53,10 +53,13 @@ func lock(l *mutex) {
 
 	// Speculative grab for lock.
 	v := atomic.Xchg(key32(&l.key), mutex_locked)
-	if v == mutex_unlocked {
-		return
+	if v != mutex_unlocked {
+		// outlined slow path to allow inlining the fast path above
+		lockSlow(l, v)
 	}
+}
 
+func lockSlow(l *mutex, v uint32) {
 	// wait is either MUTEX_LOCKED or MUTEX_SLEEPING
 	// depending on whether there is a thread sleeping
 	// on this mutex. If we ever change l->key from

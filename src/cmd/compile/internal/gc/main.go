@@ -608,7 +608,7 @@ func Main(archInit func(*Arch)) {
 		// Find functions that can be inlined and clone them before walk expands them.
 		visitBottomUp(xtop, func(list []*Node, recursive bool) {
 			for _, n := range list {
-				if !recursive {
+				if !recursive || strings.Compare(n.Func.Nname.String(), "lock") == 0 {
 					caninl(n)
 				} else {
 					if Debug['m'] > 1 {
