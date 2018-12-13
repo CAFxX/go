@@ -464,7 +464,7 @@ func TestMorestack(t *testing.T) {
 				return
 			case <-c:
 				i++
-				if i%2 == 0 {
+				if i%10 == 0 {
 					runtime.GC()
 				}
 			}
