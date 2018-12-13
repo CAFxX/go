@@ -448,9 +448,7 @@ func TestMorestack(t *testing.T) {
 		i := 0
 		for {
 			go func() {
-				if i%2 == 0 {
-					growstack1()
-				}
+				growstack1()
 				c <- true
 			}()
 			select {
@@ -458,6 +456,9 @@ func TestMorestack(t *testing.T) {
 				return
 			case <-c:
 				i++
+				if i%2 == 0 {
+					runtime.GC()
+				}
 			}
 		}
 	})
