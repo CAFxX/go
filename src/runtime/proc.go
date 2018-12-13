@@ -2731,6 +2731,7 @@ func goexit0(gp *g) {
 const (
 	stackestimslots   = 1024        // number of slots in the array
 	stackestimquantum = _FixedStack // bytes, estimations are rounded up to multiples of this
+	stackestimconfthr = 5           // how many samples before considering the estimate reliable
 )
 
 var (
@@ -2801,7 +2802,10 @@ func measuregstacksize(gopc uintptr, stacksize uintptr) {
 }
 
 func estimategstacksize(gopc uintptr) uintptr {
-	_, _, size, _ := getstackestim(gopc)
+	_, _, size, cnt := getstackestim(gopc)
+	if cnt < stackestimconfthr {
+		return 0
+	}
 	return (uintptr)(size) * stackestimquantum
 }
 
