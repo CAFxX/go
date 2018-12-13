@@ -453,15 +453,19 @@ func TestMorestack(t *testing.T) {
 	testCPUProfile(t, stackContainsAll, []string{"runtime.newstack,runtime/pprof.growstack"}, avoidFunctions(), func(duration time.Duration) {
 		t := time.After(duration)
 		c := make(chan bool)
+		i := 0
 		for {
 			go func() {
-				growstack1()
+				if i%2 == 0 {
+					growstack1()
+				}
 				c <- true
 			}()
 			select {
 			case <-t:
 				return
 			case <-c:
+				i++
 			}
 		}
 	})

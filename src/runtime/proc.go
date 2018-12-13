@@ -2739,7 +2739,7 @@ var (
 )
 
 func getstackestim(gopc uintptr) (slot *uint32, old uint32, size, cnt uint16) {
-	slot = &stackestim[pchash(gopc, stackestimseed)%stackestimslots]
+	slot = &stackestim[ptrhash(gopc, stackestimseed)%stackestimslots]
 	estim := atomic.Load(slot)
 	return slot, estim, (uint16)(estim >> 16), (uint16)(estim & 0xFFFF)
 }
@@ -2764,15 +2764,11 @@ func clearstackestim() {
 	}
 }
 
-func pchash(pc uintptr, seed uintptr) uintptr {
-	if unsafe.Sizeof(pc) == 8 {
-		return memhash64(unsafe.Pointer(&pc), seed)
-	} else if unsafe.Sizeof(pc) == 4 {
-		return memhash32(unsafe.Pointer(&pc), seed)
-	} else {
-		throw("illegal pc size")
-		return 0
+func ptrhash(ptr uintptr, seed uintptr) uintptr {
+	if unsafe.Sizeof(ptr) == 8 {
+		return memhash64(unsafe.Pointer(&ptr), seed)
 	}
+	return memhash32(unsafe.Pointer(&ptr), seed)
 }
 
 func measuregstacksize(gopc uintptr, stacksize uintptr) {
