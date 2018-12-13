@@ -2728,6 +2728,15 @@ func goexit0(gp *g) {
 //       appropriate size and deterministally find the slot corresponding
 //       to each callsite. This will also allow to avoid clearing the
 //       estimates during GC.
+// TODO: Evaluate whether it makes sense to have per-P structures (mostly
+//       stackestim) to avoid having too many cacheline bounces.
+// TODO: stackestim slots should be shrinkable to uint16 or even uint8 e.g.
+//       by using the same log2 orders used in stack.go (this would require
+//       only X bits) and log2-based probabilistic counts.
+// TODO: instead of measuring stack *size* measure actual maximum stack
+//       *usage*: currently we can't detect the case in which stack usage is
+//       smaller than the initial stack size (e.g. morestack may be extended
+//       to keep track of when stack usage grows past half of the stack size)
 const (
 	stackestimslots   = 1024        // number of slots in the array
 	stackestimquantum = _FixedStack // bytes, estimations are rounded up to multiples of this
@@ -2738,6 +2747,10 @@ var (
 	stackestim     [stackestimslots]uint32
 	stackestimseed uintptr
 )
+
+func init() {
+	stackestimseed = fastrandptr()
+}
 
 func getstackestim(gopc uintptr) (slot *uint32, old uint32, size, cnt uint16) {
 	slot = &stackestim[ptrhash(gopc, stackestimseed)%stackestimslots]
@@ -2756,10 +2769,7 @@ func xchgstackestim(slot *uint32, old uint32, size, cnt uint16) bool {
 // clearstackestim is called during GC with the world stopped
 // (to avoid races with {get,xchg}stackestim)
 func clearstackestim() {
-	stackestimseed = uintptr(fastrand())
-	if unsafe.Sizeof((uintptr)(0)) > 4 {
-		stackestimseed = stackestimseed | (uintptr(fastrand()) << 32)
-	}
+	stackestimseed = fastrandptr()
 	for i := range stackestim {
 		stackestim[i] = 0
 	}
@@ -2770,6 +2780,14 @@ func ptrhash(ptr uintptr, seed uintptr) uintptr {
 		return memhash64(unsafe.Pointer(&ptr), seed)
 	}
 	return memhash32(unsafe.Pointer(&ptr), seed)
+}
+
+func fastrandptr() uintptr {
+	r := uintptr(fastrand())
+	if unsafe.Sizeof(r) > 4 {
+		r = r | (uintptr(fastrand()) << 32)
+	}
+	return r
 }
 
 func measuregstacksize(gopc uintptr, stacksize uintptr) {
