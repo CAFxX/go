@@ -1289,6 +1289,9 @@ func gcStart(trigger gcTrigger) {
 	// clearpools before we start the GC. If we wait they memory will not be
 	// reclaimed until the next GC cycle.
 	clearpools()
+	// clearstackestim resets the stack size estimation; it is not directly
+	// related with GC, but it has to happen with the world stopped
+	clearstackestim()
 
 	work.cycles++
 

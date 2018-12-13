@@ -2680,6 +2680,8 @@ func goexit0(gp *g) {
 	gp.labels = nil
 	gp.timer = nil
 
+	measuregstacksize(gp.gopc, gp.stack.hi-gp.stack.lo)
+
 	if gcBlackenEnabled != 0 && gp.gcAssistBytes > 0 {
 		// Flush assist credit to the global pool. This gives
 		// better information to pacing if the application is
@@ -2717,6 +2719,90 @@ func goexit0(gp *g) {
 		}
 	}
 	schedule()
+}
+
+// Dynamic stack size estimation
+// TODO: Instead of a static array and hashing the pc, have the compiler
+//       emit metadata for each callsite (a simple increasing id would be
+//       enough) so that at runtime we can allocate an array of the
+//       appropriate size and deterministally find the slot corresponding
+//       to each callsite. This will also allow to avoid clearing the
+//       estimates during GC.
+const (
+	stackestimslots   = 1024        // number of slots in the array
+	stackestimquantum = _FixedStack // bytes, estimations are rounded up to multiples of this
+)
+
+var (
+	stackestim     [stackestimslots]uint32
+	stackestimseed uintptr
+)
+
+func getstackestim(gopc uintptr) (slot *uint32, old uint32, size, cnt uint16) {
+	slot := &stackestim[pchash(gopc, stackestimseed)%stackestimslots]
+	estim := atomic.Load(slot)
+	return slot, estim, (uint16)(estim >> 16), (uint16)(estim & 0xFFFF)
+}
+
+func xchgstackestim(slot *uint32, old uint32, size, cnt uint16) bool {
+	if size > 0xFFFF || cnt > 0xFFFF {
+		throw("illegal size/cnt")
+	}
+	new := ((uint32)(size) << 16) | (uint32)(cnt)
+	return atomic.Cas(slot, old, new)
+}
+
+// clearstackestim is called during GC with the world stopped
+// (to avoid races with {get,xchg}stackestim)
+func clearstackestim() {
+	stackestimseed = fastrand()
+	for i := range stackestim {
+		stackestim[i] = 0
+	}
+}
+
+func pchash(pc uintptr, seed uintptr) uintptr {
+	if unsafe.Sizeof(gopc) == 8 {
+		return memhash64(unsafe.Pointer(&gopc), seed)
+	} else if unsafe.Sizeof(gopc) == 4 {
+		return memhash32(unsafe.Pointer(&gopc), seed)
+	} else {
+		throw("illegal pc size")
+	}
+}
+
+func measuregstacksize(gopc uintptr, stacksize uintptr) {
+	// TODO: add a fast path for the case in which stacksize == _FixedStack
+
+	stacksize = (stacksize + (stackestimquantum - 1)) / stackestimquantum
+	if stacksize > 0xFFFF {
+		stacksize = 0xFFFF
+	}
+
+	for {
+		slot, old, size, cnt := getstackestim(gopc)
+
+		if cnt == 0 {
+			size, cnt = stacksize, 1
+		} else if size == stacksize {
+			if cnt < 0xFFFF && fastrandn(cnt+1) == 0 {
+				cnt++
+			}
+		} else {
+			if cnt > 0 && fastrandn(cnt) == 0 {
+				cnt--
+			}
+		}
+
+		if xchgstackestim(slot, old, size, cnt) {
+			return
+		}
+	}
+}
+
+func estimategstacksize(gopc uintptr) uintptr {
+	_, _, size, _ := getstackestim(gopc)
+	return (uintptr)(size) * stackestimquantum
 }
 
 // save updates getg().sched to refer to pc and sp so that a following
