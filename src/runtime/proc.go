@@ -2739,7 +2739,7 @@ var (
 )
 
 func getstackestim(gopc uintptr) (slot *uint32, old uint32, size, cnt uint16) {
-	slot := &stackestim[pchash(gopc, stackestimseed)%stackestimslots]
+	slot = &stackestim[pchash(gopc, stackestimseed)%stackestimslots]
 	estim := atomic.Load(slot)
 	return slot, estim, (uint16)(estim >> 16), (uint16)(estim & 0xFFFF)
 }
@@ -2755,19 +2755,23 @@ func xchgstackestim(slot *uint32, old uint32, size, cnt uint16) bool {
 // clearstackestim is called during GC with the world stopped
 // (to avoid races with {get,xchg}stackestim)
 func clearstackestim() {
-	stackestimseed = fastrand()
+	stackestimseed = uintptr(fastrand())
+	if unsafe.Sizeof((uintptr)(0)) > 4 {
+		stackestimseed = stackestimseed | (uintptr(fastrand()) << 32)
+	}
 	for i := range stackestim {
 		stackestim[i] = 0
 	}
 }
 
 func pchash(pc uintptr, seed uintptr) uintptr {
-	if unsafe.Sizeof(gopc) == 8 {
-		return memhash64(unsafe.Pointer(&gopc), seed)
-	} else if unsafe.Sizeof(gopc) == 4 {
-		return memhash32(unsafe.Pointer(&gopc), seed)
+	if unsafe.Sizeof(pc) == 8 {
+		return memhash64(unsafe.Pointer(&pc), seed)
+	} else if unsafe.Sizeof(pc) == 4 {
+		return memhash32(unsafe.Pointer(&pc), seed)
 	} else {
 		throw("illegal pc size")
+		return 0
 	}
 }
 
@@ -2783,13 +2787,13 @@ func measuregstacksize(gopc uintptr, stacksize uintptr) {
 		slot, old, size, cnt := getstackestim(gopc)
 
 		if cnt == 0 {
-			size, cnt = stacksize, 1
-		} else if size == stacksize {
-			if cnt < 0xFFFF && fastrandn(cnt+1) == 0 {
+			size, cnt = uint16(stacksize), 1
+		} else if size == uint16(stacksize) {
+			if cnt < 0xFFFF && fastrandn(uint32(cnt+1)) == 0 {
 				cnt++
 			}
 		} else {
-			if cnt > 0 && fastrandn(cnt) == 0 {
+			if cnt > 0 && fastrandn(uint32(cnt)) == 0 {
 				cnt--
 			}
 		}
@@ -3350,10 +3354,15 @@ func newproc1(fn *funcval, argp *uint8, narg int32, callergp *g, callerpc uintpt
 		throw("newproc: function arguments too large for new goroutine")
 	}
 
+	stackestim := estimategstacksize(callerpc)
+	if stackestim < _FixedStack {
+		stackestim = _FixedStack
+	}
+
 	_p_ := _g_.m.p.ptr()
-	newg := gfget(_p_)
+	newg := gfget(_p_, stackestim)
 	if newg == nil {
-		newg = malg(_StackMin)
+		newg = malg(int32(stackestim - _StackSystem))
 		casgstatus(newg, _Gidle, _Gdead)
 		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
 	}
@@ -3508,7 +3517,7 @@ func gfput(_p_ *p, gp *g) {
 
 // Get from gfree list.
 // If local list is empty, grab a batch from global list.
-func gfget(_p_ *p) *g {
+func gfget(_p_ *p, stacksize uintptr) *g {
 retry:
 	if _p_.gFree.empty() && (!sched.gFree.stack.empty() || !sched.gFree.noStack.empty()) {
 		lock(&sched.gFree.lock)
@@ -3534,10 +3543,17 @@ retry:
 		return nil
 	}
 	_p_.gFree.n--
+	if gp.stack.lo != 0 && gp.stack.hi-gp.stack.lo < stacksize {
+		// we need a bigger stack; deallocate this one
+		stackfree(gp.stack)
+		gp.stack.lo = 0
+		gp.stack.hi = 0
+		gp.stackguard0 = 0
+	}
 	if gp.stack.lo == 0 {
-		// Stack was deallocated in gfput. Allocate a new one.
+		// Stack was deallocated in gfput or gfget. Allocate a new one.
 		systemstack(func() {
-			gp.stack = stackalloc(_FixedStack)
+			gp.stack = stackalloc(uint32(stacksize))
 		})
 		gp.stackguard0 = gp.stack.lo + _StackGuard
 	} else {
