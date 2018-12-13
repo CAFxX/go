@@ -2749,7 +2749,7 @@ var (
 )
 
 func init() {
-	stackestimseed = fastrandptr()
+	stackestimseed = uintptr(fastrand())
 }
 
 func getstackestim(gopc uintptr) (slot *uint32, old uint32, size, cnt uint16) {
@@ -2759,9 +2759,6 @@ func getstackestim(gopc uintptr) (slot *uint32, old uint32, size, cnt uint16) {
 }
 
 func xchgstackestim(slot *uint32, old uint32, size, cnt uint16) bool {
-	if size > 0xFFFF || cnt > 0xFFFF {
-		throw("illegal size/cnt")
-	}
 	new := ((uint32)(size) << 16) | (uint32)(cnt)
 	return atomic.Cas(slot, old, new)
 }
@@ -2769,7 +2766,7 @@ func xchgstackestim(slot *uint32, old uint32, size, cnt uint16) bool {
 // clearstackestim is called during GC with the world stopped
 // (to avoid races with {get,xchg}stackestim)
 func clearstackestim() {
-	stackestimseed = fastrandptr()
+	stackestimseed = uintptr(fastrand())
 	for i := range stackestim {
 		stackestim[i] = 0
 	}
@@ -2780,14 +2777,6 @@ func ptrhash(ptr uintptr, seed uintptr) uintptr {
 		return memhash64(unsafe.Pointer(&ptr), seed)
 	}
 	return memhash32(unsafe.Pointer(&ptr), seed)
-}
-
-func fastrandptr() uintptr {
-	r := uintptr(fastrand())
-	if unsafe.Sizeof(r) > 4 {
-		r = r | (uintptr(fastrand()) << 32)
-	}
-	return r
 }
 
 func measuregstacksize(gopc uintptr, stacksize uintptr) {
