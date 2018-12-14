@@ -2737,6 +2737,10 @@ func goexit0(gp *g) {
 //       *usage*: currently we can't detect the case in which stack usage is
 //       smaller than the initial stack size (e.g. morestack may be extended
 //       to keep track of when stack usage grows past half of the stack size)
+// TODO: evaluate whether there are possible improvements in the per-P and
+//       global G freelists: currently it's less than ideal because we throw
+//       away stacks of standard size in case the estimate says to use a
+//       bigger stack
 const (
 	stackestimslots   = 1024        // number of slots in the array
 	stackestimquantum = _FixedStack // bytes, estimations are rounded up to multiples of this
