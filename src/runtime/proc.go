@@ -609,11 +609,13 @@ func mcommoninit(mp *m) {
 	sched.mnext++
 	checkmcount()
 
-	mp.fastrand[0] = 1597334677 * uint32(mp.id)
-	mp.fastrand[1] = uint32(cputicks())
-	if mp.fastrand[0]|mp.fastrand[1] == 0 {
-		mp.fastrand[1] = 1
+	s0 := 1597334677 * uint64(mp.id)
+	s1 := uint64(cputicks())
+	if s0|s1 == 0 {
+		s1 = 1
 	}
+	mp.fastrand[0], mp.fastrand[1] = uint32(s0), uint32(s1)
+	mp.fastrand64[0], mp.fastrand64[1] = s0, s1
 
 	mpreinit(mp)
 	if mp.gsignal != nil {
@@ -2753,11 +2755,21 @@ var (
 )
 
 func init() {
-	stackestimseed = uintptr(fastrand())
+	if sys.PtrSize == 8 {
+		stackestimseed = uintptr(fastrand64())
+	} else {
+		stackestimseed = uintptr(fastrand())
+	}
 }
 
 func getstackestim(gopc uintptr) (slot *uint32, old uint32, size, cnt uint16) {
-	slot = &stackestim[ptrhash(gopc, stackestimseed)%stackestimslots]
+	var hash uintptr
+	if sys.PtrSize == 8 {
+		hash = memhash64(unsafe.Pointer(&gopc), stackestimseed)
+	} else {
+		hash = memhash32(unsafe.Pointer(&gopc), stackestimseed)
+	}
+	slot = &stackestim[hash%stackestimslots]
 	estim := atomic.Load(slot)
 	return slot, estim, (uint16)(estim >> 16), (uint16)(estim & 0xFFFF)
 }
@@ -2770,17 +2782,14 @@ func xchgstackestim(slot *uint32, old uint32, size, cnt uint16) bool {
 // clearstackestim is called during GC with the world stopped
 // (to avoid races with {get,xchg}stackestim)
 func clearstackestim() {
-	stackestimseed = uintptr(fastrand())
+	if sys.PtrSize == 8 {
+		stackestimseed = uintptr(fastrand64())
+	} else {
+		stackestimseed = uintptr(fastrand())
+	}
 	for i := range stackestim {
 		stackestim[i] = 0
 	}
-}
-
-func ptrhash(ptr uintptr, seed uintptr) uintptr {
-	if unsafe.Sizeof(ptr) == 8 {
-		return memhash64(unsafe.Pointer(&ptr), seed)
-	}
-	return memhash32(unsafe.Pointer(&ptr), seed)
 }
 
 func measuregstacksize(gopc uintptr, stacksize uintptr) {

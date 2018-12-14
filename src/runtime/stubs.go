@@ -120,6 +120,23 @@ func fastrandn(n uint32) uint32 {
 //go:linkname sync_fastrand sync.fastrand
 func sync_fastrand() uint32 { return fastrand() }
 
+//go:nosplit
+func fastrand64() uint64 {
+	mp := getg().m
+	// xoroshiro128+
+	s0, s1 := mp.fastrand64[0], mp.fastrand64[1]
+	r := s0 + s1
+	s1 ^= s0
+	mp.fastrand64[0] = rotl(s0, 24) ^ s1 ^ (s1 << 16)
+	mp.fastrand64[1] = rotl(s1, 37)
+	return r
+}
+
+//go:nosplit
+func rotl(x uint64, k uint) uint64 {
+	return (x << k) | (x >> (64 - k))
+}
+
 // in asm_*.s
 //go:noescape
 func memequal(a, b unsafe.Pointer, size uintptr) bool
