@@ -2755,44 +2755,56 @@ var (
 )
 
 func init() {
-	if sys.PtrSize == 8 {
-		stackestimseed = uintptr(fastrand64())
-	} else {
-		stackestimseed = uintptr(fastrand())
-	}
+	stackestimseed = fastrandptr()
 }
 
+//go:nosplit
 func getstackestim(gopc uintptr) (slot *uint32, old uint32, size, cnt uint16) {
 	var hash uintptr
-	if sys.PtrSize == 8 {
-		hash = memhash64(unsafe.Pointer(&gopc), stackestimseed)
-	} else {
-		hash = memhash32(unsafe.Pointer(&gopc), stackestimseed)
-	}
+	//if sys.PtrSize == 8 {
+	hash = memhash64(unsafe.Pointer(&gopc), stackestimseed)
+	//} else {
+	//	hash = memhash32(unsafe.Pointer(&gopc), stackestimseed)
+	//}
 	slot = &stackestim[hash%stackestimslots]
-	estim := atomic.Load(slot)
-	return slot, estim, (uint16)(estim >> 16), (uint16)(estim & 0xFFFF)
+	old = atomic.Load(slot)
+	size, cnt = estimdecode(old)
+	return
 }
 
+//go:nosplit
+func estimdecode(estim uint32) (size, cnt uint16) {
+	return (uint16)(estim >> 16), (uint16)(estim)
+}
+
+//go:nosplit
+func estimencode(size, cnt uint16) uint32 {
+	return ((uint32)(size) << 16) | (uint32)(cnt)
+}
+
+//go:nosplit
 func xchgstackestim(slot *uint32, old uint32, size, cnt uint16) bool {
-	new := ((uint32)(size) << 16) | (uint32)(cnt)
-	return atomic.Cas(slot, old, new)
+	return atomic.Cas(slot, old, estimencode(size, cnt))
 }
 
 // clearstackestim is called during GC with the world stopped
 // (to avoid races with {get,xchg}stackestim)
 func clearstackestim() {
-	if sys.PtrSize == 8 {
-		stackestimseed = uintptr(fastrand64())
-	} else {
-		stackestimseed = uintptr(fastrand())
+	if !stackestimenabled {
+		return
 	}
+
+	stackestimseed = fastrandptr()
 	for i := range stackestim {
 		stackestim[i] = 0
 	}
 }
 
 func measuregstacksize(gopc uintptr, stacksize uintptr) {
+	if !stackestimenabled {
+		return
+	}
+
 	// TODO: add a fast path for the case in which stacksize == _FixedStack
 
 	stacksize = (stacksize + (stackestimquantum - 1)) / stackestimquantum
@@ -2821,12 +2833,36 @@ func measuregstacksize(gopc uintptr, stacksize uintptr) {
 	}
 }
 
+var (
+	stackestimenabled = gogetenv("GOSTACKESTIM") != "0"
+	stackestimdebug   = gogetenv("GOSTACKESTIMDEBUG") == "1"
+)
+
 func estimategstacksize(gopc uintptr) uintptr {
+	if !stackestimenabled {
+		return _FixedStack
+	}
+
 	_, _, size, cnt := getstackestim(gopc)
 	if cnt < stackestimconfthr {
 		return 0
 	}
-	return (uintptr)(size) * stackestimquantum
+	e := (uintptr)(size) * stackestimquantum
+	if stackestimdebug && e > _FixedStack {
+		printlock()
+		print("estimategstacksize(")
+		printhex((uint64)(gopc))
+		print(") = ", e, "\n")
+		printunlock()
+	}
+	return e
+}
+
+func fastrandptr() uintptr {
+	if sys.PtrSize == 8 {
+		return uintptr(fastrand64())
+	}
+	return uintptr(fastrand())
 }
 
 // save updates getg().sched to refer to pc and sp so that a following
