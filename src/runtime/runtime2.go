@@ -550,6 +550,9 @@ type p struct {
 
 	runSafePointFn uint32 // if 1, run sched.safePointFn at next safe point
 
+	// dynamic stack size estimation
+	stackestim stackestim
+
 	pad cpu.CacheLinePad
 }
 
