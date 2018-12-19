@@ -2724,29 +2724,37 @@ func goexit0(gp *g) {
 }
 
 // Dynamic stack size estimation
+// TODO: Move this to stack.go.
+// TODO: Add tests.
 // TODO: Instead of a static array and hashing the pc, have the compiler
 //       emit metadata for each callsite (a simple increasing id would be
 //       enough) so that at runtime we can allocate an array of the
 //       appropriate size and deterministally find the slot corresponding
 //       to each callsite. This will also allow to avoid clearing the
-//       estimates during GC.
-// TODO: stackestim slots should be shrinkable to uint16 or even uint8 e.g.
-//       by using the same log2 orders used in stack.go (this would require
-//       only X bits) and log2-based probabilistic counts.
+//       estimates during GC (that may cause latency spikes after each GC).
+// TODO: stackestim slots should be shrinkable to a single byte (5 bits for
+//       the order, 3 for the counts)
 // TODO: instead of measuring stack *size* measure actual maximum stack
 //       *usage*: currently we can't detect the case in which stack usage is
 //       smaller than the initial stack size (e.g. morestack may be extended
-//       to keep track of when stack usage grows past half of the stack size)
+//       to keep track of when stack usage grows past half of the stack size).
 // TODO: evaluate whether there are possible improvements in the per-P and
 //       global G freelists: currently it's less than ideal because we throw
 //       away stacks of standard size in case the estimate says to use a
-//       bigger stack
+//       bigger stack.
 // TODO: instead of measuring the most common stack size, measure the top K
-//       and pick the estimate as the one that covers at least P% of cases.
+//       and pick the estimate as the one that covers at least P% of cases
+// TODO: integrate the stack pools with the stack estimation, so that at
+//       least the most common stack size (if over 16KB) also is cached.
 const (
 	stackestimslots   = 1024        // number of slots in the array
 	stackestimquantum = _FixedStack // bytes, estimations are rounded up to multiples of this
 	stackestimconfthr = 3           // how many samples before considering the estimate reliable
+)
+
+var (
+	stackestimenabled = gogetenv("GOSTACKESTIM") != "0"
+	stackestimdebug   = gogetenv("GOSTACKESTIMDEBUG") == "1"
 )
 
 type stackestim struct {
@@ -2758,8 +2766,8 @@ type stackestim struct {
 }
 
 type stackestimslot struct {
-	size uint16
-	cnt  uint16
+	size uint8
+	cnt  uint8
 }
 
 //go:nosplit
@@ -2768,14 +2776,27 @@ func getstackestimlocal() *stackestim {
 }
 
 //go:nosplit
-func getstackestim(gopc uintptr) *stackestimslot {
-	e := getstackestimlocal()
+func (e *stackestim) getstackestim(gopc uintptr) *stackestimslot {
+	if e.ready && gopc == e.lastpc {
+		return e.lastslot // inlineable fast path
+	}
+	return e.getstackestimslow(gopc)
+}
+
+//go:nosplit
+func (e *stackestim) init() {
+	e.seed = fastrandptr()
+	for i := range e.slots {
+		e.slots[i] = stackestimslot{}
+	}
+	e.lastpc = 0
+	e.ready = true
+}
+
+//go:nosplit
+func (e *stackestim) getstackestimslow(gopc uintptr) *stackestimslot {
 	if !e.ready {
 		e.init()
-	}
-
-	if gopc == e.lastpc {
-		return e.lastslot
 	}
 
 	var hash uintptr
@@ -2794,80 +2815,62 @@ func getstackestim(gopc uintptr) *stackestimslot {
 // (to avoid races with {get,xchg}stackestim)
 func clearstackestim() {
 	if !stackestimenabled {
-		return
+		return // inlineable fast path
 	}
-	_clearstackestim()
+	clearstackestimslow()
 }
 
-func _clearstackestim() {
+func clearstackestimslow() {
 	for _, p := range allp {
 		p.stackestim.ready = false
 	}
 }
 
-//go:nosplit
-func (e *stackestim) init() {
-	e.seed = fastrandptr()
-	for i := range e.slots {
-		e.slots[i] = stackestimslot{}
-	}
-	e.lastpc = 0
-	e.ready = true
-}
-
-//go:nosplit
 func measuregstacksize(gopc uintptr, stacksize uintptr) {
 	if !stackestimenabled {
-		return
+		return // inlineable fast path
 	}
-	_measuregstacksize(gopc, stacksize)
+	measuregstacksizeslow(gopc, stacksize)
 }
 
-func _measuregstacksize(gopc uintptr, stacksize uintptr) {
+func measuregstacksizeslow(gopc uintptr, stacksize uintptr) {
 	// TODO: add a fast path for the case in which stacksize == _FixedStack
 
-	stacksize = (stacksize + (stackestimquantum - 1)) / stackestimquantum
-	if stacksize > 0xFFFF {
-		stacksize = 0xFFFF
+	order := uint8(0)
+	for n := stacksize; n > _FixedStack; n >>= 1 {
+		order++
 	}
 
-	slot := getstackestim(gopc)
+	slot := getstackestimlocal().getstackestim(gopc)
 
 	if slot.cnt == 0 {
-		if stacksize > _FixedStack/stackestimquantum {
-			slot.size, slot.cnt = uint16(stacksize), 1
+		if order > 0 {
+			slot.size, slot.cnt = order, 1
 		}
-	} else if slot.size == uint16(stacksize) {
-		if slot.cnt < 0xFFFF && fastrandn(uint32(slot.cnt+1)) == 0 {
+	} else if slot.size == order {
+		if slot.cnt < 0xFF && fastrandn(1<<uint32(slot.cnt+1)) == 0 {
 			slot.cnt++
 		}
 	} else {
-		if slot.cnt > 0 && fastrandn(uint32(slot.cnt)) == 0 {
+		if /* slot.cnt > 0 && */ fastrandn(1<<uint32(slot.cnt)) == 0 {
 			slot.cnt--
 		}
 	}
 }
 
-var (
-	stackestimenabled = gogetenv("GOSTACKESTIM") != "0"
-	stackestimdebug   = gogetenv("GOSTACKESTIMDEBUG") == "1"
-)
-
-//go:nosplit
 func estimategstacksize(gopc uintptr) uintptr {
 	if !stackestimenabled {
-		return 0
+		return 0 // inlineable fast path
 	}
-	return _estimategstacksize(gopc)
+	return estimategstacksizeslow(gopc)
 }
 
-//go:nosplit
-func _estimategstacksize(gopc uintptr) uintptr {
-	slot := getstackestim(gopc)
+func estimategstacksizeslow(gopc uintptr) uintptr {
+	slot := getstackestimlocal().getstackestim(gopc)
 	if slot.cnt < stackestimconfthr {
 		return 0
 	}
-	sz := (uintptr)(slot.size) * stackestimquantum
+	sz := uintptr(_FixedStack) << slot.size
 	if stackestimdebug && sz > _FixedStack {
 		printlock()
 		print("estimategstacksize(")
