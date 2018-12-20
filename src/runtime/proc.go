@@ -2738,10 +2738,6 @@ func goexit0(gp *g) {
 //       *usage*: currently we can't detect the case in which stack usage is
 //       smaller than the initial stack size (e.g. morestack may be extended
 //       to keep track of when stack usage grows past half of the stack size).
-// TODO: evaluate whether there are possible improvements in the per-P and
-//       global G freelists: currently it's less than ideal because we throw
-//       away stacks of standard size in case the estimate says to use a
-//       bigger stack.
 // TODO: instead of measuring the most common stack size, measure the top K
 //       and pick the estimate as the one that covers at least P% of cases
 // TODO: integrate the stack pools with the stack estimation, so that at
@@ -3574,20 +3570,32 @@ func gfput(_p_ *p, gp *g) {
 		gp.stack.lo = 0
 		gp.stack.hi = 0
 		gp.stackguard0 = 0
+
+		_p_.gFreeNoStack.push(gp)
+		_p_.gFreeNoStack.n++
+
+		if _p_.gFreeNoStack.n >= 64 {
+			lock(&sched.gFree.lock)
+			for _p_.gFreeNoStack.n >= 32 {
+				_p_.gFreeNoStack.n--
+				gp := _p_.gFreeNoStack.pop()
+				sched.gFree.noStack.push(gp)
+				sched.gFree.n++
+			}
+			unlock(&sched.gFree.lock)
+		}
+		return
 	}
 
 	_p_.gFree.push(gp)
 	_p_.gFree.n++
+
 	if _p_.gFree.n >= 64 {
 		lock(&sched.gFree.lock)
 		for _p_.gFree.n >= 32 {
 			_p_.gFree.n--
-			gp = _p_.gFree.pop()
-			if gp.stack.lo == 0 {
-				sched.gFree.noStack.push(gp)
-			} else {
-				sched.gFree.stack.push(gp)
-			}
+			gp := _p_.gFree.pop()
+			sched.gFree.stack.push(gp)
 			sched.gFree.n++
 		}
 		unlock(&sched.gFree.lock)
@@ -3598,17 +3606,13 @@ func gfput(_p_ *p, gp *g) {
 // If local list is empty, grab a batch from global list.
 func gfget(_p_ *p, stacksize uintptr) *g {
 retry:
-	if _p_.gFree.empty() && (!sched.gFree.stack.empty() || !sched.gFree.noStack.empty()) {
+	if stacksize == _FixedStack && _p_.gFree.empty() && !sched.gFree.stack.empty() {
 		lock(&sched.gFree.lock)
 		// Move a batch of free Gs to the P.
 		for _p_.gFree.n < 32 {
-			// Prefer Gs with stacks.
 			gp := sched.gFree.stack.pop()
 			if gp == nil {
-				gp = sched.gFree.noStack.pop()
-				if gp == nil {
-					break
-				}
+				break
 			}
 			sched.gFree.n--
 			_p_.gFree.push(gp)
@@ -3617,20 +3621,38 @@ retry:
 		unlock(&sched.gFree.lock)
 		goto retry
 	}
-	gp := _p_.gFree.pop()
+	if (stacksize != _FixedStack || _p_.gFree.empty()) && _p_.gFreeNoStack.empty() && !sched.gFree.noStack.empty() {
+		lock(&sched.gFree.lock)
+		for _p_.gFreeNoStack.n < 32 {
+			gp := sched.gFree.noStack.pop()
+			if gp == nil {
+				break
+			}
+			sched.gFree.n--
+			_p_.gFreeNoStack.push(gp)
+			_p_.gFreeNoStack.n++
+		}
+		unlock(&sched.gFree.lock)
+		goto retry
+	}
+	var gp *g
+	if stacksize == _FixedStack {
+		gp = _p_.gFree.pop()
+		if gp != nil {
+			_p_.gFree.n--
+		}
+	}
+	if gp == nil {
+		gp = _p_.gFreeNoStack.pop()
+		if gp != nil {
+			_p_.gFreeNoStack.n--
+		}
+	}
 	if gp == nil {
 		return nil
 	}
-	_p_.gFree.n--
-	if gp.stack.lo != 0 && gp.stack.hi-gp.stack.lo < stacksize {
-		// we need a bigger stack; deallocate this one
-		stackfree(gp.stack)
-		gp.stack.lo = 0
-		gp.stack.hi = 0
-		gp.stackguard0 = 0
-	}
 	if gp.stack.lo == 0 {
-		// Stack was deallocated in gfput or gfget. Allocate a new one.
+		// Stack was deallocated in gfput. Allocate a new one.
 		systemstack(func() {
 			gp.stack = stackalloc(uint32(stacksize))
 		})

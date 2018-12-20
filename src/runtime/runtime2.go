@@ -508,7 +508,11 @@ type p struct {
 	runnext guintptr
 
 	// Available G's (status == Gdead)
-	gFree struct {
+	gFree struct { // stack size == _FixedStack
+		gList
+		n int32
+	}
+	gFreeNoStack struct {
 		gList
 		n int32
 	}
