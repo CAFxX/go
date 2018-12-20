@@ -3621,6 +3621,7 @@ retry:
 		unlock(&sched.gFree.lock)
 		goto retry
 	}
+retryNoStack:
 	if (stacksize != _FixedStack || _p_.gFree.empty()) && _p_.gFreeNoStack.empty() && !sched.gFree.noStack.empty() {
 		lock(&sched.gFree.lock)
 		for _p_.gFreeNoStack.n < 32 {
@@ -3633,7 +3634,7 @@ retry:
 			_p_.gFreeNoStack.n++
 		}
 		unlock(&sched.gFree.lock)
-		goto retry
+		goto retryNoStack
 	}
 	var gp *g
 	if stacksize == _FixedStack {
@@ -3674,11 +3675,13 @@ func gfpurge(_p_ *p) {
 	for !_p_.gFree.empty() {
 		gp := _p_.gFree.pop()
 		_p_.gFree.n--
-		if gp.stack.lo == 0 {
-			sched.gFree.noStack.push(gp)
-		} else {
-			sched.gFree.stack.push(gp)
-		}
+		sched.gFree.stack.push(gp)
+		sched.gFree.n++
+	}
+	for !_p_.gFreeNoStack.empty() {
+		gp := _p_.gFreeNoStack.pop()
+		_p_.gFreeNoStack.n--
+		sched.gFree.noStack.push(gp)
 		sched.gFree.n++
 	}
 	unlock(&sched.gFree.lock)
@@ -3796,7 +3799,7 @@ func badunlockosthread() {
 func gcount() int32 {
 	n := int32(allglen) - sched.gFree.n - int32(atomic.Load(&sched.ngsys))
 	for _, _p_ := range allp {
-		n -= _p_.gFree.n
+		n -= _p_.gFree.n + _p_.gFreeNoStack.n
 	}
 
 	// All these variables can be changed concurrently, so the result can be inconsistent.
@@ -4715,7 +4718,7 @@ func schedtrace(detailed bool) {
 			if mp != nil {
 				id = mp.id
 			}
-			print("  P", i, ": status=", _p_.status, " schedtick=", _p_.schedtick, " syscalltick=", _p_.syscalltick, " m=", id, " runqsize=", t-h, " gfreecnt=", _p_.gFree.n, "\n")
+			print("  P", i, ": status=", _p_.status, " schedtick=", _p_.schedtick, " syscalltick=", _p_.syscalltick, " m=", id, " runqsize=", t-h, " gfreecnt=", _p_.gFree.n, "+", _p_.gFreeNoStack.n, "\n")
 		} else {
 			// In non-detailed mode format lengths of per-P run queues as:
 			// [len1 len2 len3 len4]
