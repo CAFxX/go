@@ -609,13 +609,12 @@ func mcommoninit(mp *m) {
 	sched.mnext++
 	checkmcount()
 
-	s0 := 1597334677 * uint64(mp.id)
-	s1 := uint64(cputicks())
+	s0 := 1597334677 * uint32(mp.id)
+	s1 := uint32(cputicks())
 	if s0|s1 == 0 {
 		s1 = 1
 	}
-	mp.fastrand[0], mp.fastrand[1] = uint32(s0), uint32(s1)
-	mp.fastrand64[0], mp.fastrand64[1] = s0, s1
+	mp.fastrand[0], mp.fastrand[1] = s0, s1
 
 	mpreinit(mp)
 	if mp.gsignal != nil {
@@ -2812,7 +2811,6 @@ func (e *stackestim) getstackestimslow(gopc uintptr) *stackestimslot {
 }
 
 // clearstackestim is called during GC with the world stopped
-// (to avoid races with {get,xchg}stackestim)
 func clearstackestim() {
 	if !stackestimenabled {
 		return // inlineable fast path
@@ -2883,7 +2881,7 @@ func estimategstacksizeslow(gopc uintptr) uintptr {
 
 func fastrandptr() uintptr {
 	if sys.PtrSize == 8 {
-		return uintptr(fastrand64())
+		return (uintptr(fastrand()) << 32) | uintptr(fastrand())
 	}
 	return uintptr(fastrand())
 }
