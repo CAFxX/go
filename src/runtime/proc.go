@@ -2729,7 +2729,7 @@ func goexit0(gp *g) {
 // TODO: Instead of a static array and hashing the pc, have the compiler
 //       emit metadata for each callsite (a simple increasing id would be
 //       enough) so that at runtime we can allocate an array of the
-//       appropriate size and deterministally find the slot corresponding
+//       appropriate size and deterministically find the slot corresponding
 //       to each callsite. This will also allow to avoid clearing the
 //       estimates during GC (that may cause latency spikes after each GC).
 // TODO: stackestim slots should be shrinkable to a single byte (5 bits for
@@ -2748,7 +2748,7 @@ func goexit0(gp *g) {
 //       least the most common stack size (if over 16KB) also is cached.
 const (
 	stackestimslots   = 1024        // number of slots in the array
-	stackestimquantum = _FixedStack // bytes, estimations are rounded up to multiples of this
+	stackestimquantum = _FixedStack // bytes, estimates are of the form stackestimquantum << N
 	stackestimconfthr = 3           // how many samples before considering the estimate reliable
 )
 
