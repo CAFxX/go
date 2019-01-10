@@ -605,10 +605,10 @@ func Main(archInit func(*Arch)) {
 	}
 
 	if Debug['l'] != 0 {
-		// Find functions that can be inlined and clone them before walk expands them.
-		visitBottomUp(xtop, func(list []*Node, recursive bool) {
+		filter := func(fn *Node) bool { return fn.Func.Pragma&Noinline == 0 }
+		analyze := func(list []*Node, recursive bool) {
 			for _, n := range list {
-				if !recursive || n.Func.Nname.String() == "lock" || n.Func.Nname.String() == "unlock" {
+				if !recursive {
 					caninl(n)
 				} else {
 					if Debug['m'] > 1 {
@@ -617,7 +617,9 @@ func Main(archInit func(*Arch)) {
 				}
 				inlcalls(n)
 			}
-		})
+		}
+		// Find functions that can be inlined and clone them before walk expands them.
+		visitBottomUp(xtop, analyze, filter)
 	}
 
 	// Phase 6: Escape analysis.
