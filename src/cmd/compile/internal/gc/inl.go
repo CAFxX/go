@@ -188,9 +188,11 @@ func caninl(fn *Node) {
 	// locals, and we use this map to produce a pruned Inline.Dcl
 	// list. See issue 25249 for more context.
 
+	forceinline := n.String() == "lock" || n.String() == "unlock"
+
 	budget := int32(inlineMaxBudget)
-	if n.String() == "lock" || n.String() == "unlock" {
-		budget = int32(200)
+	if forceinline {
+		budget = int32(1000)
 	}
 
 	visitor := hairyVisitor{
@@ -212,7 +214,7 @@ func caninl(fn *Node) {
 		Dcl:  inlcopylist(pruneUnusedAutos(n.Name.Defn.Func.Dcl, &visitor)),
 		Body: inlcopylist(fn.Nbody.Slice()),
 	}
-	if strings.Compare(n.String(), "lock") == 0 {
+	if forceinline {
 		n.Func.Inl.Cost = 10
 	}
 
