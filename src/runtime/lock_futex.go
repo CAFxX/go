@@ -45,21 +45,31 @@ func key32(p *uintptr) *uint32 {
 
 func lock(l *mutex) {
 	gp := getg()
+	v := uint32(0)
 
-	if gp.m.locks < 0 {
-		throw("runtime·lock: lock count")
-	}
-	gp.m.locks++
+	// The case of locks < 0 is handled in lockSlow.
+	if gp.m.locks >= 0 {
+		gp.m.locks++
 
-	// Speculative grab for lock.
-	v := atomic.Xchg(key32(&l.key), mutex_locked)
-	if v != mutex_unlocked {
-		// outlined slow path to allow inlining the fast path above
-		lockSlow(l, v)
+		// Speculative grab for lock.
+		v = atomic.Xchg(key32(&l.key), mutex_locked)
+		if v == mutex_unlocked {
+			return
+		}
 	}
+
+	// Outlined slow path to allow inlining the fast path above.
+	lockSlow(l, v)
 }
 
 func lockSlow(l *mutex, v uint32) {
+	// This check was originally in the fast path above, but was moved
+	// here to allow the fast path to be inlined. It must be the first
+	// check because in case locks < 0 the value of v is meaningless.
+	if getg().m.locks < 0 {
+		throw("runtime·lock: lock count")
+	}
+
 	// wait is either MUTEX_LOCKED or MUTEX_SLEEPING
 	// depending on whether there is a thread sleeping
 	// on this mutex. If we ever change l->key from
@@ -108,20 +118,33 @@ func lockSlow(l *mutex, v uint32) {
 
 func unlock(l *mutex) {
 	v := atomic.Xchg(key32(&l.key), mutex_unlocked)
-	if v == mutex_unlocked {
-		throw("unlock of unlocked lock")
+	// Fast path: no waiters.
+	if v == mutex_locked {
+		gp := getg()
+		// The other cases are handled in unlockSlow.
+		if gp.m.locks > 0 && !gp.preempt {
+			gp.m.locks--
+			return
+		}
 	}
+
+	// Outlined slow path to allow inlining the fast path above.
+	unlockSlow(l, v)
+}
+
+func unlockSlow(l *mutex, v uint32) {
 	if v == mutex_sleeping {
 		futexwakeup(key32(&l.key), 1)
+	} else if v == mutex_unlocked {
+		throw("unlock of unlocked lock")
 	}
 
 	gp := getg()
 	gp.m.locks--
-	if gp.m.locks < 0 {
-		throw("runtime·unlock: lock count")
-	}
 	if gp.m.locks == 0 && gp.preempt { // restore the preemption request in case we've cleared it in newstack
 		gp.stackguard0 = stackPreempt
+	} else if gp.m.locks < 0 {
+		throw("runtime·unlock: lock count")
 	}
 }
 

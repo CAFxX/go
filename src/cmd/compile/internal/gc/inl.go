@@ -189,7 +189,7 @@ func caninl(fn *Node) {
 	// list. See issue 25249 for more context.
 
 	budget := int32(inlineMaxBudget)
-	if strings.Compare(n.String(), "lock") == 0 {
+	if n.String() == "lock" || n.String() == "unlock" {
 		budget = int32(200)
 	}
 
