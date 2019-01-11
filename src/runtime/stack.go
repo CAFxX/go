@@ -1033,8 +1033,43 @@ func newstack() {
 		gopreempt_m(gp) // never return
 	}
 
-	// Allocate a bigger segment and move the stack.
+	// Check if stack estimation already provided a bigger stack.
 	oldsize := gp.stack.hi - gp.stack.lo
+	for {
+		stackguard0 := atomic.Loaduintptr(&gp.stackguard0)
+		if stackguard0 == gp.stack.lo+_StackGuard {
+			// Fast path for the common case in which the G has the default
+			// stack size.
+			break
+		}
+		if stackguard0 > gp.stack.hi || stackguard0 < gp.stack.lo {
+			// The stack guard is outside the stack. This can happen in case the
+			// G is preempted during newstack. Nothing we can do in this case.
+			break
+		}
+		oldstack := gp.stack.hi - stackguard0
+		newstack := oldstack * 2
+		if newstack > oldsize-_StackGuard {
+			newstack = oldsize - _StackGuard
+		}
+		if oldstack >= newstack {
+			// No unused stack space: we have to allocate a new one.
+			break
+		}
+		newstackguard0 := gp.stack.hi - newstack
+		if newstackguard0 < gp.stack.lo+_StackGuard {
+			// This should never happen.
+			print("runtime: newstack inplace resize sp=", hex(sp), " stack=[", hex(gp.stack.lo), ", ",
+				hex(stackguard0), ", ", hex(gp.stack.hi), "]: ", oldstack, " -> ", newstack, " bytes\n")
+			throw("stack inplace resize overflow")
+		}
+		// We have unused stack space: simply update stackguard0 and return.
+		if atomic.Casuintptr(&gp.stackguard0, stackguard0, newstackguard0) {
+			return
+		}
+	}
+
+	// Allocate a bigger segment and move the stack.
 	newsize := oldsize * 2
 	if newsize > maxstacksize {
 		print("runtime: goroutine stack exceeds ", maxstacksize, "-byte limit\n")

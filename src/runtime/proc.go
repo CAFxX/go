@@ -2681,7 +2681,7 @@ func goexit0(gp *g) {
 	gp.labels = nil
 	gp.timer = nil
 
-	measuregstacksize(gp.gopc, gp.stack.hi-gp.stack.lo)
+	measuregstacksize(gp.gopc, gp.stack.hi-gp.stackguard0)
 
 	if gcBlackenEnabled != 0 && gp.gcAssistBytes > 0 {
 		// Flush assist credit to the global pool. This gives
@@ -2746,14 +2746,14 @@ func goexit0(gp *g) {
 // TODO: integrate the stack pools with the stack estimation, so that at
 //       least the most common stack size (if over 16KB) also is cached.
 const (
-	stackestimslots   = 1024        // number of slots in the array
+	stackestimslots   = 256         // number of slots in the array
 	stackestimquantum = _FixedStack // bytes, estimates are of the form stackestimquantum << N
 	stackestimconfthr = 3           // how many samples before considering the estimate reliable
 )
 
 var (
 	stackestimenabled = gogetenv("GOSTACKESTIM") != "0"
-	stackestimdebug   = gogetenv("GOSTACKESTIMDEBUG") == "1"
+	stackestimdebug   = gogetenv("GOSTACKESTIM") == "2"
 )
 
 type stackestim struct {
@@ -3440,6 +3440,9 @@ func newproc1(fn *funcval, argp *uint8, narg int32, callergp *g, callerpc uintpt
 	newg := gfget(_p_, stackestim)
 	if newg == nil {
 		newg = malg(int32(stackestim - _StackSystem))
+		if stackestim >= 2*_FixedStack {
+			newg.stackguard0 = newg.stack.hi - stackestim/2
+		}
 		casgstatus(newg, _Gidle, _Gdead)
 		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
 	}
@@ -3632,7 +3635,11 @@ retry:
 		systemstack(func() {
 			gp.stack = stackalloc(uint32(stacksize))
 		})
-		gp.stackguard0 = gp.stack.lo + _StackGuard
+		if stacksize < _FixedStack*2 {
+			gp.stackguard0 = gp.stack.lo + _StackGuard
+		} else {
+			gp.stackguard0 = gp.stack.hi - stacksize/2
+		}
 	} else {
 		if raceenabled {
 			racemalloc(unsafe.Pointer(gp.stack.lo), gp.stack.hi-gp.stack.lo)
