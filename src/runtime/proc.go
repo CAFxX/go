@@ -609,12 +609,11 @@ func mcommoninit(mp *m) {
 	sched.mnext++
 	checkmcount()
 
-	s0 := 1597334677 * uint32(mp.id)
-	s1 := uint32(cputicks())
-	if s0|s1 == 0 {
-		s1 = 1
+	mp.fastrand[0] = 1597334677 * uint32(mp.id)
+	mp.fastrand[1] = uint32(cputicks())
+	if mp.fastrand[0]|mp.fastrand[1] == 0 {
+		mp.fastrand[1] = 1
 	}
-	mp.fastrand[0], mp.fastrand[1] = s0, s1
 
 	mpreinit(mp)
 	if mp.gsignal != nil {
