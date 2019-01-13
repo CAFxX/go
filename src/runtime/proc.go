@@ -2732,18 +2732,14 @@ func goexit0(gp *g) {
 //       estimates during GC (that may cause latency spikes after each GC).
 // TODO: stackestim slots should be shrinkable to a single byte (5 bits for
 //       the order, 3 for the counts)
-// TODO: instead of measuring stack *size* measure actual maximum stack
-//       *usage*: currently we can't detect the case in which stack usage is
-//       smaller than the initial stack size (e.g. morestack may be extended
-//       to keep track of when stack usage grows past half of the stack size).
-// TODO: evaluate whether there are possible improvements in the per-P and
+// TODO: Evaluate whether there are possible improvements in the per-P and
 //       global G freelists: currently it's less than ideal because we throw
 //       away stacks of standard size in case the estimate says to use a
 //       bigger stack.
-// TODO: instead of measuring the most common stack size, measure the top K
-//       and pick the estimate as the one that covers at least P% of cases
-// TODO: integrate the stack pools with the stack estimation, so that at
-//       least the most common stack size (if over 16KB) also is cached.
+// TODO: Instead of measuring the most common stack size, measure the P-th
+//       percentile.
+// TODO: Integrate the stack pools with the stack estimation, so that at
+//       least the most common stack size (even if over 16KB) is also cached.
 const (
 	stackestimslots   = 256         // number of slots in the array
 	stackestimquantum = _FixedStack // bytes, estimates are of the form stackestimquantum << N
