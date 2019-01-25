@@ -137,14 +137,13 @@ func encoderune(p []byte, r rune) int {
 // kept in sync. If encoderune ever becomes inlinable and the optimizer is able to elide all
 // writes to the buffer then this can go away.
 func encodedrunebytes(r rune) int {
-	switch i := uint32(r); {
-	case i <= rune1Max:
+	if i := uint32(r); i <= rune1Max {
 		return 1
-	case i <= rune2Max:
+	} else if i <= rune2Max {
 		return 2
-	case i <= rune3Max, i > maxRune, surrogateMin <= i && i <= surrogateMax:
+	} else if i <= rune3Max || i > maxRune || (surrogateMin <= i && i <= surrogateMax) {
 		return 3
-	default:
+	} else {
 		return 4
 	}
 }
