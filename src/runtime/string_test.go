@@ -5,10 +5,13 @@
 package runtime_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -452,5 +455,60 @@ func TestAtoi32(t *testing.T) {
 			t.Errorf("atoi32(%q) = (%v, %v) want (%v, %v)",
 				test.in, out, ok, test.out, test.ok)
 		}
+	}
+}
+
+//go:noinline
+func samestring(a, b string) bool {
+	ap, bp := runtime.StringPtr(a), runtime.StringPtr(b)
+	return len(a) == len(b) && ap == bp
+}
+
+func TestStringInternConcat(t *testing.T) {
+	var a, b string
+	for i := 0; i < 50; i++ {
+		a += "x"
+		b += "x"
+	}
+	if !samestring(a, b) {
+		t.Fatal("string interning failed")
+	}
+}
+
+func TestStringInternFromByteSlice(t *testing.T) {
+	var a, b []byte
+	for i := 0; i < 50; i++ {
+		a = append(a, 'x')
+		b = append(b, 'x')
+	}
+	if !samestring(string(a), string(b)) {
+		t.Fatal("string interning failed")
+	}
+}
+
+func TestStringInternPrintf(t *testing.T) {
+	now := time.Now().Unix()
+	a := fmt.Sprintf("test%d", now)
+	b := fmt.Sprintf("test%d", now)
+	if !samestring(a, b) {
+		t.Fatal("string interning failed")
+	}
+}
+
+func TestStringInternJsonDecode(t *testing.T) {
+	j := []byte(`{"hello": "world"}`)
+	a := struct {
+		Str string `json:"hello"`
+	}{}
+	b := struct {
+		Str string `json:"hello"`
+	}{}
+	e1 := json.Unmarshal(j, &a)
+	e2 := json.Unmarshal(j, &b)
+	if e1 != nil || e2 != nil {
+		t.Fatal("json decoding failed")
+	}
+	if !samestring(a.Str, b.Str) {
+		t.Fatal("string interning failed")
 	}
 }

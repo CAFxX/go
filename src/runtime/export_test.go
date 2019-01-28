@@ -513,3 +513,7 @@ func MapTombstoneCheck(m map[int]int) {
 		}
 	}
 }
+
+func StringPtr(s string) uintptr {
+	return uintptr(stringStructOf(&s).str)
+}
