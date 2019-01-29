@@ -458,7 +458,6 @@ func TestAtoi32(t *testing.T) {
 	}
 }
 
-//go:noinline
 func samestring(a, b string) bool {
 	ap, bp := runtime.StringPtr(a), runtime.StringPtr(b)
 	return len(a) == len(b) && ap == bp
@@ -467,8 +466,8 @@ func samestring(a, b string) bool {
 func TestStringInternConcat(t *testing.T) {
 	var a, b string
 	for i := 0; i < 50; i++ {
-		a += "x"
-		b += "x"
+		a += "z"
+		b += "z"
 	}
 	if !samestring(a, b) {
 		t.Fatal("string interning failed")
@@ -486,10 +485,57 @@ func TestStringInternFromByteSlice(t *testing.T) {
 	}
 }
 
+func TestStringInternFromRuneSlice(t *testing.T) {
+	var a, b []rune
+	for i := 0; i < 20; i++ {
+		a = append(a, '心')
+		b = append(b, '心')
+	}
+	if !samestring(string(a), string(b)) {
+		t.Fatal("string interning failed")
+	}
+}
+
+func TestStringInternFormatInt(t *testing.T) {
+	now := time.Now().UnixNano()
+	a := strconv.FormatInt(now, 10)
+	b := strconv.FormatInt(now, 10)
+	if !samestring(a, b) {
+		t.Fatal("string interning failed")
+	}
+}
+
 func TestStringInternPrintf(t *testing.T) {
-	now := time.Now().Unix()
+	now := time.Now().UnixNano()
 	a := fmt.Sprintf("test%d", now)
 	b := fmt.Sprintf("test%d", now)
+	if !samestring(a, b) {
+		t.Fatal("string interning failed")
+	}
+}
+
+func TestStringInternRepeat(t *testing.T) {
+	a := strings.Repeat("世界", 20)
+	b := strings.Repeat("世界", 20)
+	if !samestring(a, b) {
+		t.Fatal("string interning failed")
+	}
+}
+
+func TestStringInternBuilder(t *testing.T) {
+	var a, b strings.Builder
+	for i := 0; i < 20; i++ {
+		a.WriteString("森")
+		b.WriteString("森")
+	}
+	if !samestring(a.String(), b.String()) {
+		t.Fatal("string interning failed")
+	}
+}
+
+func TestStringInternToUpper(t *testing.T) {
+	a := strings.ToUpper(strings.Repeat("y", 100))
+	b := strings.ToUpper(strings.Repeat("y", 100))
 	if !samestring(a, b) {
 		t.Fatal("string interning failed")
 	}
