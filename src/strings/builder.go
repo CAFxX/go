@@ -44,7 +44,7 @@ func (b *Builder) copyCheck() {
 
 // String returns the accumulated string.
 func (b *Builder) String() string {
-	return *(*string)(unsafe.Pointer(&b.buf))
+	return runtime_stringintern(*(*string)(unsafe.Pointer(&b.buf)))
 }
 
 // Len returns the number of accumulated bytes; b.Len() == len(b.String()).
@@ -122,3 +122,6 @@ func (b *Builder) WriteString(s string) (int, error) {
 	b.buf = append(b.buf, s...)
 	return len(s), nil
 }
+
+// defined in src/runtime/string.go
+func runtime_stringintern(string) string

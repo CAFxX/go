@@ -613,3 +613,13 @@ func interntmp(b []byte) string {
 	}
 	return s
 }
+
+//go:linkname stringsbuilder_intern strings.runtime_stringintern
+func stringsbuilder_intern(s string) string {
+	str, interned, idx := stringIsInterned(s)
+	if interned {
+		return str
+	}
+	internString(s, idx)
+	return s
+}

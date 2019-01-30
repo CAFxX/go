@@ -515,8 +515,8 @@ func TestStringInternPrintf(t *testing.T) {
 }
 
 func TestStringInternRepeat(t *testing.T) {
-	a := strings.Repeat("世界", 20)
-	b := strings.Repeat("世界", 20)
+	a := strings.Repeat("世界", 10)
+	b := strings.Repeat("世界", 10)
 	if !samestring(a, b) {
 		t.Fatal("string interning failed")
 	}
@@ -534,8 +534,8 @@ func TestStringInternBuilder(t *testing.T) {
 }
 
 func TestStringInternToUpper(t *testing.T) {
-	a := strings.ToUpper(strings.Repeat("y", 100))
-	b := strings.ToUpper(strings.Repeat("y", 100))
+	a := strings.ToUpper(strings.Repeat("y", 50))
+	b := strings.ToUpper(strings.Repeat("y", 50))
 	if !samestring(a, b) {
 		t.Fatal("string interning failed")
 	}
