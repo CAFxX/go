@@ -66,7 +66,7 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	}
 
 	if usingInternBuf {
-		return interntmp(b)
+		return stringintern_tmp(b)
 	}
 	return s
 }
@@ -120,7 +120,7 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 	var idx uintptr
 	if tryIntern {
 		var interned bool
-		str, interned, idx = stringIsInterned(slicebytetostringtmp(b))
+		str, interned, idx = stringintern_get_nocheck(slicebytetostringtmp(b))
 		if interned {
 			return
 		}
@@ -138,7 +138,7 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 	memmove(p, (*(*slice)(unsafe.Pointer(&b))).array, uintptr(l))
 
 	if tryIntern {
-		internString(str, idx)
+		stringintern_put_nocheck(str, idx)
 	}
 
 	return
@@ -263,7 +263,7 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 	}
 
 	if usingInternBuf {
-		return interntmp(b[:size2])
+		return stringintern_tmp(b[:size2])
 	}
 	return s[:size2]
 }
@@ -558,9 +558,6 @@ func gostringw(strw *uint16) string {
 // TODO: Tune strInternMaxLen and the size of the per-P tables.
 // TODO: Remove the extra copy due to the use of internBuf.
 // TODO: Evaluate alternatives to memhash.
-// TODO: Once midstack inlining works deduplicate the checks for strInternMaxLen
-//       in the functions above and allow the early return in stringIsInterned to
-//       be inlined.
 // TODO: Deal with table thrashing due to excessive number of unique strings (e.g.
 //       by either dynamically disabling interning or dynamically increasing the
 //       per-P table sizes)
@@ -571,23 +568,31 @@ const strInternMaxLen = 64 // (arbitrary) maximum length of string to be conside
 
 type internBuf [strInternMaxLen]byte
 
-func internString(s string, idx uintptr) {
+func stringintern_put(s string, idx uintptr) {
 	if len(s) > strInternMaxLen {
 		return
 	}
+	stringintern_put_nocheck(s, idx)
+}
+
+func stringintern_put_nocheck(s string, idx uintptr) {
 	// Note that because we're not pinned, we may be writing to the table of
 	// a different P or otherwise with a different seed (because GC happened
 	// in the meanwhile): while writes in such a situation will degrade the
 	// effectiveness of the per-P table, they don't pose correctness issues
-	// because stringIsInterned needs to check the strings for equality.
+	// because stringintern_get_nocheck needs to check the strings for equality.
 	getg().m.p.ptr().strInternTable[idx] = s
 }
 
-func stringIsInterned(s string) (string, bool, uintptr) {
-	ps := (*stringStruct)(noescape(unsafe.Pointer(&s)))
-	if ps.len > strInternMaxLen {
+func stringintern_get(s string) (string, bool, uintptr) {
+	if len(s) > strInternMaxLen {
 		return "", false, 0
 	}
+	return stringintern_get_nocheck(s)
+}
+
+func stringintern_get_nocheck(s string) (string, bool, uintptr) {
+	ps := (*stringStruct)(noescape(unsafe.Pointer(&s)))
 
 	procPin()
 	_p_ := getg().m.p.ptr()
@@ -603,23 +608,23 @@ func stringIsInterned(s string) (string, bool, uintptr) {
 	return "", false, idx
 }
 
-func interntmp(b []byte) string {
-	s, interned, idx := stringIsInterned(slicebytetostringtmp(b))
+func stringintern_tmp(b []byte) string {
+	s, interned, idx := stringintern_get(slicebytetostringtmp(b))
 	if !interned {
 		var nb []byte
 		s, nb = rawstring(len(b))
 		copy(nb, b)
-		internString(s, idx)
+		stringintern_put(s, idx)
 	}
 	return s
 }
 
-//go:linkname stringsbuilder_intern strings.runtime_stringintern
-func stringsbuilder_intern(s string) string {
-	str, interned, idx := stringIsInterned(s)
+//go:linkname stringintern_strings strings.runtime_stringintern
+func stringintern_strings(s string) string {
+	str, interned, idx := stringintern_get(s)
 	if interned {
 		return str
 	}
-	internString(s, idx)
+	stringintern_put(s, idx)
 	return s
 }
