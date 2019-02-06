@@ -5,6 +5,7 @@
 package strings
 
 import (
+	internal_runtime "internal/runtime"
 	"unicode/utf8"
 	"unsafe"
 )
@@ -44,7 +45,11 @@ func (b *Builder) copyCheck() {
 
 // String returns the accumulated string.
 func (b *Builder) String() string {
-	return runtime_stringintern(*(*string)(unsafe.Pointer(&b.buf)))
+	return stringintern(b.stringNoIntern())
+}
+
+func (b *Builder) stringNoIntern() string {
+	return *(*string)(unsafe.Pointer(&b.buf))
 }
 
 // Len returns the number of accumulated bytes; b.Len() == len(b.String()).
@@ -121,6 +126,13 @@ func (b *Builder) WriteString(s string) (int, error) {
 	b.copyCheck()
 	b.buf = append(b.buf, s...)
 	return len(s), nil
+}
+
+func stringintern(s string) string {
+	if len(s) > internal_runtime.StringInternMaxLen {
+		return s
+	}
+	return runtime_stringintern(s)
 }
 
 // defined in src/runtime/string.go

@@ -541,9 +541,9 @@ func Repeat(s string, count int) string {
 	b.WriteString(s)
 	for b.Len() < n {
 		if b.Len() <= n/2 {
-			b.WriteString(b.String())
+			b.WriteString(b.stringNoIntern())
 		} else {
-			b.WriteString(b.String()[:n-b.Len()])
+			b.WriteString(b.stringNoIntern()[:n-b.Len()])
 			break
 		}
 	}

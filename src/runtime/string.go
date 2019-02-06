@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"internal/bytealg"
+	irt "internal/runtime"
 	"unsafe"
 )
 
@@ -66,7 +67,7 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	}
 
 	if usingInternBuf {
-		return stringintern_tmp(b)
+		return stringintern_tmp_nocheck(b)
 	}
 	return s
 }
@@ -263,7 +264,7 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 	}
 
 	if usingInternBuf {
-		return stringintern_tmp(b[:size2])
+		return stringintern_tmp_nocheck(b[:size2])
 	}
 	return s[:size2]
 }
@@ -564,16 +565,9 @@ func gostringw(strw *uint16) string {
 // TODO: Deal with table thrashing due to hash collisions of frequent strings with
 //       infrequent ones (e.g. by storing a 1-3 bit "hit" counter per entry)
 
-const strInternMaxLen = 64 // (arbitrary) maximum length of string to be considered for interning
+const strInternMaxLen = irt.StringInternMaxLen // (arbitrary) maximum length of string to be considered for interning
 
 type internBuf [strInternMaxLen]byte
-
-func stringintern_put(s string, idx uintptr) {
-	if len(s) > strInternMaxLen {
-		return
-	}
-	stringintern_put_nocheck(s, idx)
-}
 
 func stringintern_put_nocheck(s string, idx uintptr) {
 	// Note that because we're not pinned, we may be writing to the table of
@@ -582,13 +576,6 @@ func stringintern_put_nocheck(s string, idx uintptr) {
 	// effectiveness of the per-P table, they don't pose correctness issues
 	// because stringintern_get_nocheck needs to check the strings for equality.
 	getg().m.p.ptr().strInternTable[idx] = s
-}
-
-func stringintern_get(s string) (string, bool, uintptr) {
-	if len(s) > strInternMaxLen {
-		return "", false, 0
-	}
-	return stringintern_get_nocheck(s)
 }
 
 func stringintern_get_nocheck(s string) (string, bool, uintptr) {
@@ -608,23 +595,23 @@ func stringintern_get_nocheck(s string) (string, bool, uintptr) {
 	return "", false, idx
 }
 
-func stringintern_tmp(b []byte) string {
-	s, interned, idx := stringintern_get(slicebytetostringtmp(b))
+func stringintern_tmp_nocheck(b []byte) string {
+	is, interned, idx := stringintern_get_nocheck(slicebytetostringtmp(b))
 	if !interned {
 		var nb []byte
-		s, nb = rawstring(len(b))
+		is, nb = rawstring(len(b))
 		copy(nb, b)
-		stringintern_put(s, idx)
+		stringintern_put_nocheck(is, idx)
 	}
-	return s
+	return is
 }
 
 //go:linkname stringintern_strings strings.runtime_stringintern
 func stringintern_strings(s string) string {
-	str, interned, idx := stringintern_get(s)
+	is, interned, idx := stringintern_get_nocheck(s)
 	if interned {
-		return str
+		return is
 	}
-	stringintern_put(s, idx)
+	stringintern_put_nocheck(s, idx)
 	return s
 }
