@@ -45,7 +45,7 @@ func (b *Builder) copyCheck() {
 
 // String returns the accumulated string.
 func (b *Builder) String() string {
-	return stringintern(b.stringNoIntern())
+	return internal_runtime.StringIntern(b.stringNoIntern())
 }
 
 func (b *Builder) stringNoIntern() string {
@@ -127,13 +127,3 @@ func (b *Builder) WriteString(s string) (int, error) {
 	b.buf = append(b.buf, s...)
 	return len(s), nil
 }
-
-func stringintern(s string) string {
-	if len(s) > internal_runtime.StringInternMaxLen {
-		return s
-	}
-	return runtime_stringintern(s)
-}
-
-// defined in src/runtime/string.go
-func runtime_stringintern(string) string

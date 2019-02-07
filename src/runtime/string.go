@@ -52,7 +52,7 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	// or at least to avoid the second copy
 	var s string
 	var b []byte
-	usingInternBuf := l <= strInternMaxLen && (buf == nil || l > len(buf))
+	usingInternBuf := l <= irt.StringInternMaxLen && (buf == nil || l > len(buf))
 	if !usingInternBuf {
 		s, b = rawstringtmp(buf, l)
 	} else {
@@ -116,7 +116,7 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 	}
 
 	usingBuf := buf != nil && l <= len(buf)
-	tryIntern := l <= strInternMaxLen && !usingBuf
+	tryIntern := l <= irt.StringInternMaxLen && !usingBuf
 
 	var idx uintptr
 	if tryIntern {
@@ -246,7 +246,7 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 	var s string
 	var b []byte
 	l := size1 + 3
-	usingInternBuf := l <= strInternMaxLen && (buf == nil || l > len(buf))
+	usingInternBuf := l <= irt.StringInternMaxLen && (buf == nil || l > len(buf))
 	if !usingInternBuf {
 		s, b = rawstringtmp(buf, l)
 	} else {
@@ -553,10 +553,10 @@ func gostringw(strw *uint16) string {
 // fixed in size collisions are likely: when a collision happens the old string is
 // replaced with the new one; this means that when checking for presence we have
 // to compare the whole string in addition to the hash. To bound the resulting
-// overhead automatic interning is performed on small strings (<strInternMaxLen).
+// overhead automatic interning is performed on small strings (<StringInternMaxLen).
 // TODO: Move most string interning to the concurrent GC mark phase.
 // TODO: Expose APIs to perform on-demand interning.
-// TODO: Tune strInternMaxLen and the size of the per-P tables.
+// TODO: Tune StringInternMaxLen and the size of the per-P tables.
 // TODO: Remove the extra copy due to the use of internBuf.
 // TODO: Evaluate alternatives to memhash.
 // TODO: Deal with table thrashing due to excessive number of unique strings (e.g.
@@ -565,9 +565,7 @@ func gostringw(strw *uint16) string {
 // TODO: Deal with table thrashing due to hash collisions of frequent strings with
 //       infrequent ones (e.g. by storing a 1-3 bit "hit" counter per entry)
 
-const strInternMaxLen = irt.StringInternMaxLen // (arbitrary) maximum length of string to be considered for interning
-
-type internBuf [strInternMaxLen]byte
+type internBuf [irt.StringInternMaxLen]byte
 
 func stringintern_put_nocheck(s string, idx uintptr) {
 	// Note that because we're not pinned, we may be writing to the table of
@@ -606,8 +604,8 @@ func stringintern_tmp_nocheck(b []byte) string {
 	return is
 }
 
-//go:linkname stringintern_strings strings.runtime_stringintern
-func stringintern_strings(s string) string {
+//go:linkname stringintern_internal internal/runtime.stringintern
+func stringintern_internal(s string) string {
 	is, interned, idx := stringintern_get_nocheck(s)
 	if interned {
 		return is
