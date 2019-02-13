@@ -314,6 +314,7 @@ var debug struct {
 	scheddetail        int32
 	schedtrace         int32
 	tracebackancestors int32
+	stringinternenable int32
 }
 
 var dbgvars = []dbgVar{
@@ -332,12 +333,14 @@ var dbgvars = []dbgVar{
 	{"scheddetail", &debug.scheddetail},
 	{"schedtrace", &debug.schedtrace},
 	{"tracebackancestors", &debug.tracebackancestors},
+	{"stringinternenable", &debug.stringinternenable},
 }
 
 func parsedebugvars() {
 	// defaults
 	debug.cgocheck = 1
 	debug.invalidptr = 1
+	debug.stringinternenable = 1
 
 	for p := gogetenv("GODEBUG"); p != ""; {
 		field := ""

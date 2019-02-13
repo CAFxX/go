@@ -52,7 +52,7 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	// or at least to avoid the second copy
 	var s string
 	var b []byte
-	usingInternBuf := l <= irt.StringInternMaxLen && (buf == nil || l > len(buf))
+	usingInternBuf := l <= irt.StringInternMaxLen && (buf == nil || l > len(buf)) && stringintern_enable()
 	if !usingInternBuf {
 		s, b = rawstringtmp(buf, l)
 	} else {
@@ -116,7 +116,7 @@ func slicebytetostring(buf *tmpBuf, b []byte) (str string) {
 	}
 
 	usingBuf := buf != nil && l <= len(buf)
-	tryIntern := l <= irt.StringInternMaxLen && !usingBuf
+	tryIntern := l <= irt.StringInternMaxLen && !usingBuf && stringintern_enable()
 
 	var idx uintptr
 	if tryIntern {
@@ -246,7 +246,7 @@ func slicerunetostring(buf *tmpBuf, a []rune) string {
 	var s string
 	var b []byte
 	l := size1 + 3
-	usingInternBuf := l <= irt.StringInternMaxLen && (buf == nil || l > len(buf))
+	usingInternBuf := l <= irt.StringInternMaxLen && (buf == nil || l > len(buf)) && stringintern_enable()
 	if !usingInternBuf {
 		s, b = rawstringtmp(buf, l)
 	} else {
@@ -567,6 +567,10 @@ func gostringw(strw *uint16) string {
 
 type internBuf [irt.StringInternMaxLen]byte
 
+func stringintern_enable() bool {
+	return debug.stringinternenable != 0
+}
+
 func stringintern_put_nocheck(s string, idx uintptr) {
 	// Note that because we're not pinned, we may be writing to the table of
 	// a different P or otherwise with a different seed (because GC happened
@@ -606,6 +610,9 @@ func stringintern_tmp_nocheck(b []byte) string {
 
 //go:linkname stringintern_internal internal/runtime.stringintern
 func stringintern_internal(s string) string {
+	if !stringintern_enable() {
+		return s
+	}
 	is, interned, idx := stringintern_get_nocheck(s)
 	if interned {
 		return is
