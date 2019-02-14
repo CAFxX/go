@@ -124,6 +124,62 @@ loop:
 	}
 }
 
+func TestPoolPartialRelease(t *testing.T) {
+	if runtime.GOMAXPROCS(-1) <= 1 {
+		t.Skip("pool partial release test is only stable when GOMAXPROCS > 1")
+	}
+
+	// disable GC so we can control when it happens.
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+
+	Ps := runtime.GOMAXPROCS(-1)
+	Gs := Ps * 10
+	Gobjs := 10000
+
+	var p Pool
+	var wg WaitGroup
+	start := int32(0)
+	for i := 0; i < Gs; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			atomic.AddInt32(&start, 1)
+			for atomic.LoadInt32(&start) < int32(Ps) {
+				// spin until enough Gs are ready to go
+			}
+			for j := 0; j < Gobjs; j++ {
+				p.Put(new (string))
+			}
+		}()
+	}
+	wg.Wait()
+
+	waitGC()
+
+	inpool := 0
+	for p.Get() != nil {
+		inpool++
+	}
+	objs := Gs * Gobjs
+	min, max := objs/2 - objs/Ps, objs/2 + objs/Ps
+	if inpool < min || inpool > max {
+		// GC should have dropped half of the per-P shards; because we don't know the
+		// exact distribution of the objects in the shards when we started, and we don't
+		// know which shards have been cleared, we consider the test successful as long
+		// as after GC the number of remaining objects is half ± objs/Ps.
+		t.Fatalf("objects in pool %d, expected between %d and %d", inpool, min, max)
+	}
+}
+
+func waitGC() {
+	ch := make(chan struct{})
+	runtime.SetFinalizer(&[16]byte{}, func(_ interface{}) {
+		close(ch)
+	})
+	runtime.GC()
+	<-ch
+}
+
 func TestPoolStress(t *testing.T) {
 	const P = 10
 	N := int(1e6)

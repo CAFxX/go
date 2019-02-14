@@ -244,13 +244,14 @@ func poolCleanup() {
 			if l.private != nil || len(l.shared) > 0 {
 				empty = false
 			}
-			if i%2 == int(cleanupCount%2) || deleteAll {
-				l.private = nil
-				for j := range l.shared {
-					l.shared[j] = nil
-				}
-				l.shared = nil
+			if i%2 == int(cleanupCount%2) && !deleteAll {
+				continue
 			}
+			l.private = nil
+			for j := range l.shared {
+				l.shared[j] = nil
+			}
+			l.shared = nil
 		}
 		if empty || deleteAll {
 			p.local = nil
