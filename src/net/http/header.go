@@ -80,10 +80,13 @@ func (h Header) write(w io.Writer, trace *httptrace.ClientTrace) error {
 
 func (h Header) clone() Header {
 	h2 := make(Header, len(h))
+	// We preallocate the slice of strings assuming that, in the
+	// common case, each header only appears once; this allows to
+	// avoid iterating on h twice.
+	s := make([]string, 0, len(h))
 	for k, vv := range h {
-		vv2 := make([]string, len(vv))
-		copy(vv2, vv)
-		h2[k] = vv2
+		s = append(s, vv...)
+		h2[k], s = s[0:len(vv):len(vv)], s[len(vv):]
 	}
 	return h2
 }

@@ -6,6 +6,7 @@ package http
 
 import (
 	"bytes"
+	"fmt"
 	"internal/race"
 	"runtime"
 	"testing"
@@ -209,5 +210,22 @@ func TestHeaderWriteSubsetAllocs(t *testing.T) {
 	})
 	if n > 0 {
 		t.Errorf("allocs = %g; want 0", n)
+	}
+}
+
+func BenchmarkHeaderClone(b *testing.B) {
+	for _, n := range []int{0, 1, 2, 3, 5, 10} {
+		b.Run(fmt.Sprintf("%d", n), func(b *testing.B) {
+			b.ReportAllocs()
+			b.RunParallel(func(pb *testing.PB) {
+				h := make(Header)
+				for i := 0; i < n; i++ {
+					h.Set(fmt.Sprintf("Header%d", i), fmt.Sprintf("HeaderValue%d", i))
+				}
+				for pb.Next() {
+					h = h.clone()
+				}
+			})
+		})
 	}
 }
