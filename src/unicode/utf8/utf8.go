@@ -564,5 +564,5 @@ func ValidString(s string) bool {
 // ValidRune reports whether r can be legally encoded as UTF-8.
 // Code points that are out of range or a surrogate half are illegal.
 func ValidRune(r rune) bool {
-	return (0 <= r && r < surrogateMin) || (surrogateMax < r && r <= MaxRune)
+	return (uint32(r) < surrogateMin) || (surrogateMax < r && r <= MaxRune)
 }
