@@ -100,6 +100,13 @@ var acceptRanges = [...]acceptRange{
 // FullRune reports whether the bytes in p begin with a full UTF-8 encoding of a rune.
 // An invalid encoding is considered a full Rune since it will convert as a width-1 error rune.
 func FullRune(p []byte) bool {
+	if len(p) > 0 && p[0] < RuneSelf {
+		return true
+	}
+	return fullRuneSlow(p)
+}
+
+func fullRuneSlow(p []byte) bool {
 	n := len(p)
 	if n == 0 {
 		return false
@@ -120,6 +127,13 @@ func FullRune(p []byte) bool {
 
 // FullRuneInString is like FullRune but its input is a string.
 func FullRuneInString(s string) bool {
+	if len(s) > 0 && s[0] < RuneSelf {
+		return true
+	}
+	return fullRuneInStringSlow(s)
+}
+
+func fullRuneInStringSlow(s string) bool {
 	n := len(s)
 	if n == 0 {
 		return false
@@ -146,7 +160,15 @@ func FullRuneInString(s string) bool {
 // An encoding is invalid if it is incorrect UTF-8, encodes a rune that is
 // out of range, or is not the shortest possible UTF-8 encoding for the
 // value. No other validation is performed.
-func DecodeRune(p []byte) (r rune, size int) {
+func DecodeRune(p []byte) (rune, int) {
+	if len(p) > 0 && p[0] < RuneSelf {
+		// Fast path for ASCII characters
+		return rune(p[0]), 1
+	}
+	return decodeRuneSlow(p)
+}
+
+func decodeRuneSlow(p []byte) (r rune, size int) {
 	n := len(p)
 	if n < 1 {
 		return RuneError, 0
@@ -194,7 +216,15 @@ func DecodeRune(p []byte) (r rune, size int) {
 // An encoding is invalid if it is incorrect UTF-8, encodes a rune that is
 // out of range, or is not the shortest possible UTF-8 encoding for the
 // value. No other validation is performed.
-func DecodeRuneInString(s string) (r rune, size int) {
+func DecodeRuneInString(s string) (rune, int) {
+	if len(s) > 0 && s[0] < RuneSelf {
+		// Fast path for ASCII characters
+		return rune(s[0]), 1
+	}
+	return decodeRuneInStringSlow(s)
+}
+
+func decodeRuneInStringSlow(s string) (r rune, size int) {	
 	n := len(s)
 	if n < 1 {
 		return RuneError, 0
@@ -243,6 +273,13 @@ func DecodeRuneInString(s string) (r rune, size int) {
 // out of range, or is not the shortest possible UTF-8 encoding for the
 // value. No other validation is performed.
 func DecodeLastRune(p []byte) (r rune, size int) {
+	if len(p) > 0 && p[len(p)-1] < RuneSelf {
+		return rune(p[len(p)-1]), 1
+	}
+	return decodeLastRuneSlow(p)
+}
+
+func decodeLastRuneSlow(p []byte) (r rune, size int) {
 	end := len(p)
 	if end == 0 {
 		return RuneError, 0
@@ -283,6 +320,13 @@ func DecodeLastRune(p []byte) (r rune, size int) {
 // out of range, or is not the shortest possible UTF-8 encoding for the
 // value. No other validation is performed.
 func DecodeLastRuneInString(s string) (r rune, size int) {
+	if len(s) > 0 && s[len(s)-1] < RuneSelf {
+		return rune(s[len(s)-1]), 1
+	}
+	return decodeLastRuneInStringSlow(s)
+}
+
+func decodeLastRuneInStringSlow(s string) (r rune, size int) {
 	end := len(s)
 	if end == 0 {
 		return RuneError, 0
@@ -317,18 +361,22 @@ func DecodeLastRuneInString(s string) (r rune, size int) {
 // RuneLen returns the number of bytes required to encode the rune.
 // It returns -1 if the rune is not a valid value to encode in UTF-8.
 func RuneLen(r rune) int {
-	switch {
-	case r < 0:
-		return -1
-	case r <= rune1Max:
+	if uint32(r) < RuneSelf {
 		return 1
-	case r <= rune2Max:
+	}
+	return runeLenSlow(r)
+}
+
+func runeLenSlow(r rune) int {
+	ur := uint32(r)
+	switch {
+	case ur <= rune2Max:
 		return 2
-	case surrogateMin <= r && r <= surrogateMax:
+	case surrogateMin <= ur && ur <= surrogateMax:
 		return -1
-	case r <= rune3Max:
+	case ur <= rune3Max:
 		return 3
-	case r <= MaxRune:
+	case ur <= MaxRune:
 		return 4
 	}
 	return -1
@@ -337,11 +385,16 @@ func RuneLen(r rune) int {
 // EncodeRune writes into p (which must be large enough) the UTF-8 encoding of the rune.
 // It returns the number of bytes written.
 func EncodeRune(p []byte, r rune) int {
-	// Negative values are erroneous. Making it unsigned addresses the problem.
-	switch i := uint32(r); {
-	case i <= rune1Max:
+	if uint32(r) < RuneSelf {
 		p[0] = byte(r)
 		return 1
+	}
+	return encodeRuneSlow(p, r)
+}
+
+func encodeRuneSlow(p []byte, r rune) int {
+	// Negative values are erroneous. Making it unsigned addresses the problem.
+	switch i := uint32(r); {
 	case i <= rune2Max:
 		_ = p[1] // eliminate bounds checks
 		p[0] = t2 | byte(r>>6)
@@ -511,11 +564,5 @@ func ValidString(s string) bool {
 // ValidRune reports whether r can be legally encoded as UTF-8.
 // Code points that are out of range or a surrogate half are illegal.
 func ValidRune(r rune) bool {
-	switch {
-	case 0 <= r && r < surrogateMin:
-		return true
-	case surrogateMax < r && r <= MaxRune:
-		return true
-	}
-	return false
+	return (0 <= r && r < surrogateMin) || (surrogateMax < r && r <= MaxRune)
 }
