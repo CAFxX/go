@@ -204,19 +204,14 @@ func IndexAny(s []byte, chars string) int {
 			return -1
 		}
 	}
-	var width int
-	for i := 0; i < len(s); i += width {
-		r := rune(s[i])
-		if r < utf8.RuneSelf {
-			width = 1
-		} else {
-			r, width = utf8.DecodeRune(s[i:])
-		}
+	for i := 0; i < len(s); {
+		r, width := utf8.DecodeRune(s[i:])
 		for _, ch := range chars {
 			if r == ch {
 				return i
 			}
 		}
+		i += width
 	}
 	return -1
 }
@@ -390,11 +385,7 @@ func FieldsFunc(s []byte, f func(rune) bool) [][]byte {
 	wasField := false
 	fromIndex := 0
 	for i := 0; i < len(s); {
-		size := 1
-		r := rune(s[i])
-		if r >= utf8.RuneSelf {
-			r, size = utf8.DecodeRune(s[i:])
-		}
+		r, size := utf8.DecodeRune(s[i:])
 		if f(r) {
 			if wasField {
 				spans = append(spans, span{start: fromIndex, end: i})
@@ -469,11 +460,7 @@ func Map(mapping func(r rune) rune, s []byte) []byte {
 	nbytes := 0        // number of bytes encoded in b
 	b := make([]byte, maxbytes)
 	for i := 0; i < len(s); {
-		wid := 1
-		r := rune(s[i])
-		if r >= utf8.RuneSelf {
-			r, wid = utf8.DecodeRune(s[i:])
-		}
+		r, wid := utf8.DecodeRune(s[i:])
 		r = mapping(r)
 		if r >= 0 {
 			rl := utf8.RuneLen(r)
@@ -661,11 +648,7 @@ func LastIndexFunc(s []byte, f func(r rune) bool) int {
 func indexFunc(s []byte, f func(r rune) bool, truth bool) int {
 	start := 0
 	for start < len(s) {
-		wid := 1
-		r := rune(s[start])
-		if r >= utf8.RuneSelf {
-			r, wid = utf8.DecodeRune(s[start:])
-		}
+		r, wid := utf8.DecodeRune(s[start:])
 		if f(r) == truth {
 			return start
 		}
@@ -860,20 +843,13 @@ func ReplaceAll(s, old, new []byte) []byte {
 // are equal under Unicode case-folding.
 func EqualFold(s, t []byte) bool {
 	for len(s) != 0 && len(t) != 0 {
-		// Extract first rune from each.
 		var sr, tr rune
-		if s[0] < utf8.RuneSelf {
-			sr, s = rune(s[0]), s[1:]
-		} else {
-			r, size := utf8.DecodeRune(s)
-			sr, s = r, s[size:]
-		}
-		if t[0] < utf8.RuneSelf {
-			tr, t = rune(t[0]), t[1:]
-		} else {
-			r, size := utf8.DecodeRune(t)
-			tr, t = r, t[size:]
-		}
+
+		// Extract first rune from each.
+		r, size := utf8.DecodeRune(s)
+		sr, s = r, s[size:]
+		r, size = utf8.DecodeRune(t)
+		tr, t = r, t[size:]
 
 		// If they match, keep going; if not, return false.
 
@@ -886,18 +862,10 @@ func EqualFold(s, t []byte) bool {
 		if tr < sr {
 			tr, sr = sr, tr
 		}
-		// Fast check for ASCII.
-		if tr < utf8.RuneSelf {
-			// ASCII only, sr/tr must be upper/lower case
-			if 'A' <= sr && sr <= 'Z' && tr == sr+'a'-'A' {
-				continue
-			}
-			return false
-		}
 
-		// General case. SimpleFold(x) returns the next equivalent rune > x
+		// SimpleFold(x) returns the next equivalent rune > x
 		// or wraps around to smaller values.
-		r := unicode.SimpleFold(sr)
+		r = unicode.SimpleFold(sr)
 		for r != sr && r < tr {
 			r = unicode.SimpleFold(r)
 		}

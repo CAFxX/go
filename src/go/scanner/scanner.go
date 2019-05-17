@@ -60,18 +60,13 @@ func (s *Scanner) next() {
 			s.lineOffset = s.offset
 			s.file.AddLine(s.offset)
 		}
-		r, w := rune(s.src[s.rdOffset]), 1
-		switch {
-		case r == 0:
+		r, w := utf8.DecodeRune(s.src[s.rdOffset:])
+		if r == 0 {
 			s.error(s.offset, "illegal character NUL")
-		case r >= utf8.RuneSelf:
-			// not ASCII
-			r, w = utf8.DecodeRune(s.src[s.rdOffset:])
-			if r == utf8.RuneError && w == 1 {
-				s.error(s.offset, "illegal UTF-8 encoding")
-			} else if r == bom && s.offset > 0 {
-				s.error(s.offset, "illegal byte order mark")
-			}
+		} else if r == utf8.RuneError && w == 1 {
+			s.error(s.offset, "illegal UTF-8 encoding")
+		} else if r == bom && s.offset > 0 {
+			s.error(s.offset, "illegal byte order mark")
 		}
 		s.rdOffset += w
 		s.ch = r

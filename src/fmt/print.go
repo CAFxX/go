@@ -88,18 +88,10 @@ func (b *buffer) WriteByte(c byte) {
 }
 
 func (bp *buffer) WriteRune(r rune) {
-	if r < utf8.RuneSelf {
-		*bp = append(*bp, byte(r))
-		return
-	}
-
-	b := *bp
-	n := len(b)
-	for n+utf8.UTFMax > cap(b) {
-		b = append(b, 0)
-	}
-	w := utf8.EncodeRune(b[n:n+utf8.UTFMax], r)
-	*bp = b[:n+w]
+	b, l := *bp, len(*bp)
+	b = append(b, make([]byte, utf8.UTFMax)...)
+	w := utf8.EncodeRune(b[l:], r)
+	*bp = b[:l+w]
 }
 
 // pp is used to store a printer's state and is reused with sync.Pool to avoid allocations.
@@ -1080,10 +1072,7 @@ formatLoop:
 			break
 		}
 
-		verb, size := rune(format[i]), 1
-		if verb >= utf8.RuneSelf {
-			verb, size = utf8.DecodeRuneInString(format[i:])
-		}
+		verb, size := utf8.DecodeRuneInString(format[i:])
 		i += size
 
 		switch {

@@ -287,10 +287,7 @@ func (b *Reader) ReadRune() (r rune, size int, err error) {
 	if b.r == b.w {
 		return 0, 0, b.readErr()
 	}
-	r, size = rune(b.buf[b.r]), 1
-	if r >= utf8.RuneSelf {
-		r, size = utf8.DecodeRune(b.buf[b.r:b.w])
-	}
+	r, size = utf8.DecodeRune(b.buf[b.r:b.w])
 	b.r += size
 	b.lastByte = int(b.buf[b.r-1])
 	b.lastRuneSize = size
@@ -653,23 +650,15 @@ func (b *Writer) WriteByte(c byte) error {
 // WriteRune writes a single Unicode code point, returning
 // the number of bytes written and any error.
 func (b *Writer) WriteRune(r rune) (size int, err error) {
-	if r < utf8.RuneSelf {
-		err = b.WriteByte(byte(r))
-		if err != nil {
-			return 0, err
-		}
-		return 1, nil
-	}
 	if b.err != nil {
 		return 0, b.err
 	}
-	n := b.Available()
-	if n < utf8.UTFMax {
+	s := utf8.RuneLen(r)
+	if b.Available() < s {
 		if b.Flush(); b.err != nil {
 			return 0, b.err
 		}
-		n = b.Available()
-		if n < utf8.UTFMax {
+		if b.Available() < s {
 			// Can only happen if buffer is silly small.
 			return b.WriteString(string(r))
 		}

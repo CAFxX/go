@@ -278,10 +278,6 @@ func (b *Buffer) WriteByte(c byte) error {
 // included to match bufio.Writer's WriteRune. The buffer is grown as needed;
 // if it becomes too large, WriteRune will panic with ErrTooLarge.
 func (b *Buffer) WriteRune(r rune) (n int, err error) {
-	if r < utf8.RuneSelf {
-		b.WriteByte(byte(r))
-		return 1, nil
-	}
 	b.lastRead = opInvalid
 	m, ok := b.tryGrowByReslice(utf8.UTFMax)
 	if !ok {
@@ -356,12 +352,6 @@ func (b *Buffer) ReadRune() (r rune, size int, err error) {
 		// Buffer is empty, reset to recover space.
 		b.Reset()
 		return 0, 0, io.EOF
-	}
-	c := b.buf[b.off]
-	if c < utf8.RuneSelf {
-		b.off++
-		b.lastRead = opReadRune1
-		return rune(c), 1, nil
 	}
 	r, n := utf8.DecodeRune(b.buf[b.off:])
 	b.off += n

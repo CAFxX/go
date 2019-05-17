@@ -337,12 +337,15 @@ type foldPair struct {
 //	SimpleFold(-2) = -2
 //
 func SimpleFold(r rune) rune {
+	if uint(r) < uint(len(asciiFold)) {
+		return rune(asciiFold[r])
+	}
+	return simpleFoldSlow(r)
+}
+
+func simpleFoldSlow(r rune) rune {
 	if r < 0 || r > MaxRune {
 		return r
-	}
-
-	if int(r) < len(asciiFold) {
-		return rune(asciiFold[r])
 	}
 
 	// Consult caseOrbit table for special cases.

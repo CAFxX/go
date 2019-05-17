@@ -297,13 +297,16 @@ var errorRune = []byte(string(utf8.RuneError))
 // Because of the Scan interface, this makes it impossible for the client to
 // distinguish correctly encoded replacement runes from encoding errors.
 func ScanRunes(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if len(data) > 0 && data[0] < utf8.RuneSelf {
+		// Fast path 1: ASCII.
+		return 1, data[0:1], nil
+	}
+	return scanRunesSlow(data, atEOF)
+}
+
+func scanRunesSlow(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	if atEOF && len(data) == 0 {
 		return 0, nil, nil
-	}
-
-	// Fast path 1: ASCII.
-	if data[0] < utf8.RuneSelf {
-		return 1, data[0:1], nil
 	}
 
 	// Fast path 2: Correct UTF-8 decode without error.
