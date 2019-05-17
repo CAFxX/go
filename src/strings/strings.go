@@ -157,7 +157,7 @@ func IndexByte(s string, c byte) int {
 // invalid UTF-8 byte sequence.
 func IndexRune(s string, r rune) int {
 	switch {
-	case 0 <= r && r < utf8.RuneSelf:
+	case uint(r) < utf8.RuneSelf:
 		return IndexByte(s, byte(r))
 	case r == utf8.RuneError:
 		for i, r := range s {
@@ -691,12 +691,11 @@ func TrimLeftFunc(s string, f func(rune) bool) string {
 // Unicode code points c satisfying f(c) removed.
 func TrimRightFunc(s string, f func(rune) bool) string {
 	i := lastIndexFunc(s, f, false)
-	if i >= 0 && s[i] >= utf8.RuneSelf {
-		_, wid := utf8.DecodeRuneInString(s[i:])
-		i += wid
-	} else {
-		i++
+	if i < 0 {
+		return ""
 	}
+	_, wid := utf8.DecodeRuneInString(s[i:])
+	i += wid
 	return s[0:i]
 }
 
@@ -923,18 +922,10 @@ func EqualFold(s, t string) bool {
 	for s != "" && t != "" {
 		// Extract first rune from each string.
 		var sr, tr rune
-		if s[0] < utf8.RuneSelf {
-			sr, s = rune(s[0]), s[1:]
-		} else {
-			r, size := utf8.DecodeRuneInString(s)
-			sr, s = r, s[size:]
-		}
-		if t[0] < utf8.RuneSelf {
-			tr, t = rune(t[0]), t[1:]
-		} else {
-			r, size := utf8.DecodeRuneInString(t)
-			tr, t = r, t[size:]
-		}
+		r, size := utf8.DecodeRuneInString(s)
+		sr, s = r, s[size:]
+		r, size = utf8.DecodeRuneInString(t)
+		tr, t = r, t[size:]
 
 		// If they match, keep going; if not, return false.
 
@@ -947,18 +938,10 @@ func EqualFold(s, t string) bool {
 		if tr < sr {
 			tr, sr = sr, tr
 		}
-		// Fast check for ASCII.
-		if tr < utf8.RuneSelf {
-			// ASCII only, sr/tr must be upper/lower case
-			if 'A' <= sr && sr <= 'Z' && tr == sr+'a'-'A' {
-				continue
-			}
-			return false
-		}
 
 		// General case. SimpleFold(x) returns the next equivalent rune > x
 		// or wraps around to smaller values.
-		r := unicode.SimpleFold(sr)
+		r = unicode.SimpleFold(sr)
 		for r != sr && r < tr {
 			r = unicode.SimpleFold(r)
 		}

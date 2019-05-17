@@ -30,6 +30,12 @@ func noescape(p unsafe.Pointer) unsafe.Pointer {
 }
 
 func (b *Builder) copyCheck() {
+	if b.addr != b {
+		b.copyCheckSlow()
+	}
+}
+
+func (b *Builder) copyCheckSlow() {
 	if b.addr == nil {
 		// This hack works around a failing of Go's escape analysis
 		// that was causing b to escape and be heap allocated.
@@ -37,7 +43,7 @@ func (b *Builder) copyCheck() {
 		// TODO: once issue 7921 is fixed, this should be reverted to
 		// just "b.addr = b".
 		b.addr = (*Builder)(noescape(unsafe.Pointer(b)))
-	} else if b.addr != b {
+	} else {
 		panic("strings: illegal use of non-zero Builder copied by value")
 	}
 }
@@ -64,6 +70,12 @@ func (b *Builder) Reset() {
 // grow copies the buffer to a new, larger buffer so that there are at least n
 // bytes of capacity beyond len(b.buf).
 func (b *Builder) grow(n int) {
+	if cap(b.buf)-len(b.buf) < n {
+		b.growSlow(n)
+	}
+}
+
+func (b *Builder) growSlow(n int) {
 	buf := make([]byte, len(b.buf), 2*cap(b.buf)+n)
 	copy(buf, b.buf)
 	b.buf = buf
@@ -77,9 +89,7 @@ func (b *Builder) Grow(n int) {
 	if n < 0 {
 		panic("strings.Builder.Grow: negative count")
 	}
-	if cap(b.buf)-len(b.buf) < n {
-		b.grow(n)
-	}
+	b.grow(n)
 }
 
 // Write appends the contents of p to b's buffer.
@@ -102,14 +112,8 @@ func (b *Builder) WriteByte(c byte) error {
 // It returns the length of r and a nil error.
 func (b *Builder) WriteRune(r rune) (int, error) {
 	b.copyCheck()
-	if r < utf8.RuneSelf {
-		b.buf = append(b.buf, byte(r))
-		return 1, nil
-	}
+	b.grow(utf8.UTFMax)
 	l := len(b.buf)
-	if cap(b.buf)-l < utf8.UTFMax {
-		b.grow(utf8.UTFMax)
-	}
 	n := utf8.EncodeRune(b.buf[l:l+utf8.UTFMax], r)
 	b.buf = b.buf[:l+n]
 	return n, nil

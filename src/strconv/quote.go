@@ -247,11 +247,9 @@ func UnquoteChar(s string, quote byte) (value rune, multibyte bool, tail string,
 	case c == quote && (quote == '\'' || quote == '"'):
 		err = ErrSyntax
 		return
-	case c >= utf8.RuneSelf:
+	case c != '\\':
 		r, size := utf8.DecodeRuneInString(s)
 		return r, true, s[size:], nil
-	case c != '\\':
-		return rune(s[0]), false, s[1:], nil
 	}
 
 	// hard case: c is backslash
@@ -410,11 +408,11 @@ func Unquote(s string) (string, error) {
 			return "", err
 		}
 		s = ss
-		if c < utf8.RuneSelf || !multibyte {
-			buf = append(buf, byte(c))
-		} else {
+		if multibyte {
 			n := utf8.EncodeRune(runeTmp[:], c)
 			buf = append(buf, runeTmp[:n]...)
+		} else {
+			buf = append(buf, byte(c))
 		}
 		if quote == '\'' && len(s) != 0 {
 			// single-quoted must be single character

@@ -261,18 +261,14 @@ func (s *Scanner) next() rune {
 			}
 		}
 		// at least one byte
-		ch = rune(s.srcBuf[s.srcPos])
-		if ch >= utf8.RuneSelf {
-			// uncommon case: not ASCII
-			ch, width = utf8.DecodeRune(s.srcBuf[s.srcPos:s.srcEnd])
-			if ch == utf8.RuneError && width == 1 {
-				// advance for correct error position
-				s.srcPos += width
-				s.lastCharLen = width
-				s.column++
-				s.error("invalid UTF-8 encoding")
-				return ch
-			}
+		ch, width = utf8.DecodeRune(s.srcBuf[s.srcPos:s.srcEnd])
+		if ch == utf8.RuneError && width == 1 {
+			// advance for correct error position
+			s.srcPos += width
+			s.lastCharLen = width
+			s.column++
+			s.error("invalid UTF-8 encoding")
+			return ch
 		}
 	}
 
