@@ -229,10 +229,6 @@ func (w *gcWork) putFast(obj uintptr) bool {
 //
 //go:nowritebarrierrec
 func (w *gcWork) putBatch(obj []uintptr) {
-	if len(obj) == 0 {
-		return
-	}
-
 	w.checkPut(0, obj)
 
 	flushed := false
@@ -258,6 +254,30 @@ func (w *gcWork) putBatch(obj []uintptr) {
 	if flushed && gcphase == _GCmark {
 		gcController.enlistWorker()
 	}
+}
+
+// putBatchFast does a putBatch and reports whether it can be done quickly
+// otherwise it returns false and the caller needs to call putBatch.
+//
+//go:nowritebarrierrec
+func (w *gcWork) putBatchFast(obj []uintptr) bool {
+	if len(obj) == 0 {
+		return true
+	}
+
+	w.checkPut(0, obj)
+
+	wbuf := w.wbuf1
+	if wbuf == nil {
+		return false
+	}
+
+	if len(wbuf.obj)-wbuf.nobj < len(obj) {
+		return false
+	}
+	copy(wbuf.obj[wbuf.nobj:], obj)
+	wbuf.nobj += len(obj)
+	return true
 }
 
 // tryGet dequeues a pointer for the garbage collector to trace.
