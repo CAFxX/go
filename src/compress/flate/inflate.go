@@ -352,6 +352,7 @@ func (f *decompressor) Read(b []byte) (int, error) {
 }
 
 func (f *decompressor) Close() error {
+	f.dict.putHist()
 	if f.err == io.EOF {
 		return nil
 	}

@@ -54,7 +54,9 @@ func BenchmarkDecode(b *testing.B) {
 		runtime.GC()
 		b.StartTimer()
 		for i := 0; i < b.N; i++ {
-			io.Copy(ioutil.Discard, NewReader(bytes.NewReader(buf1)))
+			r := NewReader(bytes.NewReader(buf1))
+			io.Copy(ioutil.Discard, r)
+			r.Close()
 		}
 	})
 }

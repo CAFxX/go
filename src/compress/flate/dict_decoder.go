@@ -4,6 +4,8 @@
 
 package flate
 
+import "sync"
+
 // dictDecoder implements the LZ77 sliding dictionary as used in decompression.
 // LZ77 decompresses data through sequences of two forms of commands:
 //
@@ -40,9 +42,8 @@ func (dd *dictDecoder) init(size int, dict []byte) {
 	*dd = dictDecoder{hist: dd.hist}
 
 	if cap(dd.hist) < size {
-		dd.hist = make([]byte, size)
+		dd.getHist(size)
 	}
-	dd.hist = dd.hist[:size]
 
 	if len(dict) > len(dd.hist) {
 		dict = dict[len(dict)-len(dd.hist):]
@@ -54,6 +55,25 @@ func (dd *dictDecoder) init(size int, dict []byte) {
 	}
 	dd.rdPos = dd.wrPos
 }
+
+func (dd *dictDecoder) getHist(size int) {
+	dd.putHist()
+	if size <= maxMatchOffset {
+		dd.hist, _ = histPool.Get().([]byte)
+		dd.hist = dd.hist[0:size]
+	} else {
+		dd.hist = make([]byte, size)
+	}
+}
+
+func (dd *dictDecoder) putHist() {
+	if cap(dd.hist) == maxMatchOffset {
+		histPool.Put(dd.hist)
+		dd.hist = nil
+	}
+}
+
+var histPool = sync.Pool{New: func() interface{} { return make([]byte, maxMatchOffset) }}
 
 // histSize reports the total amount of historical data in the dictionary.
 func (dd *dictDecoder) histSize() int {
