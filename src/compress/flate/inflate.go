@@ -277,8 +277,8 @@ type decompressor struct {
 	h1, h2 huffmanDecoder
 
 	// Length arrays used to define Huffman codes.
-	bits     *[maxNumLit + maxNumDist]int
-	codebits *[numCodes]int
+	bits     [maxNumLit + maxNumDist]int
+	codebits [numCodes]int
 
 	// Output history, buffer.
 	dict dictDecoder
@@ -775,14 +775,17 @@ func fixedHuffmanDecoderInit() {
 
 func (f *decompressor) Reset(r io.Reader, dict []byte) error {
 	*f = decompressor{
-		r:        makeReader(r),
-		bits:     f.bits,
-		codebits: f.codebits,
-		dict:     f.dict,
-		step:     (*decompressor).nextBlock,
+		r:    makeReader(r),
+		dict: f.dict,
+		step: (*decompressor).nextBlock,
 	}
 	f.dict.init(maxMatchOffset, dict)
 	return nil
+}
+
+func (f *decompressor) init(r io.Reader, dict []byte) error {
+	fixedHuffmanDecoderInit()
+	return f.Reset(r, dict)
 }
 
 // NewReader returns a new ReadCloser that can be used
@@ -794,15 +797,9 @@ func (f *decompressor) Reset(r io.Reader, dict []byte) error {
 //
 // The ReadCloser returned by NewReader also implements Resetter.
 func NewReader(r io.Reader) io.ReadCloser {
-	fixedHuffmanDecoderInit()
-
-	var f decompressor
-	f.r = makeReader(r)
-	f.bits = new([maxNumLit + maxNumDist]int)
-	f.codebits = new([numCodes]int)
-	f.step = (*decompressor).nextBlock
-	f.dict.init(maxMatchOffset, nil)
-	return &f
+	f := &decompressor{}
+	f.init(r, nil)
+	return f
 }
 
 // NewReaderDict is like NewReader but initializes the reader
@@ -813,13 +810,7 @@ func NewReader(r io.Reader) io.ReadCloser {
 //
 // The ReadCloser returned by NewReader also implements Resetter.
 func NewReaderDict(r io.Reader, dict []byte) io.ReadCloser {
-	fixedHuffmanDecoderInit()
-
-	var f decompressor
-	f.r = makeReader(r)
-	f.bits = new([maxNumLit + maxNumDist]int)
-	f.codebits = new([numCodes]int)
-	f.step = (*decompressor).nextBlock
-	f.dict.init(maxMatchOffset, dict)
-	return &f
+	f := &decompressor{}
+	f.init(r, dict)
+	return f
 }
