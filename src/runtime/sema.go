@@ -192,6 +192,15 @@ func semrelease1(addr *uint32, handoff bool, skipframes int) {
 			s.ticket = 1
 		}
 		readyWithTime(s, 5+skipframes)
+		if s.ticket == 1 {
+			// Direct G handoff
+			// readyWithTime has added the waiter G as runnext in the current P; we now call
+			// the scheduler so that we start running the waiter G immediately. Note that
+			// waiter inherits our time slice: this is desirable to avoid having a highly
+			// contended semaphore hog the P indefinitely.
+			// See https://github.com/golang/go/issues/33747 for discussion.
+			Gosched()
+		}
 	}
 }
 
