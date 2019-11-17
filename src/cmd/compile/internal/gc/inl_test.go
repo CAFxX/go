@@ -116,6 +116,12 @@ func TestIntendedInlining(t *testing.T) {
 			"byLiteral.Less",
 			"byLiteral.Swap",
 		},
+		"context": {
+			"(*cancelCtx).value",
+			"(*emptyCtx).value",
+			"(*timerCtx).value",
+			"(*valueCtx).value",
+		},
 		"encoding/base64": {
 			"assemble32",
 			"assemble64",

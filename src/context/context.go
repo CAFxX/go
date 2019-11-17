@@ -182,8 +182,13 @@ func (*emptyCtx) Err() error {
 	return nil
 }
 
-func (*emptyCtx) Value(key interface{}) interface{} {
-	return nil
+func (c *emptyCtx) Value(key interface{}) interface{} {
+	v, _ := c.value(key)
+	return v
+}
+
+func (*emptyCtx) value(interface{}) (interface{}, Context) {
+	return nil, nil
 }
 
 func (e *emptyCtx) String() string {
@@ -348,10 +353,18 @@ type cancelCtx struct {
 }
 
 func (c *cancelCtx) Value(key interface{}) interface{} {
-	if key == &cancelCtxKey {
-		return c
+	v, pc :=  c.value(key)
+	if pc == nil {
+		return v
 	}
-	return c.Context.Value(key)
+	return value(pc, key)
+}
+
+func (c *cancelCtx) value(key interface{}) (interface{}, Context) {
+	if key == &cancelCtxKey {
+		return c, nil
+	}
+	return nil, c.Context
 }
 
 func (c *cancelCtx) Done() <-chan struct{} {
@@ -547,8 +560,38 @@ func (c *valueCtx) String() string {
 }
 
 func (c *valueCtx) Value(key interface{}) interface{} {
-	if c.key == key {
-		return c.val
+	v, pc := c.value(key)
+	if pc == nil {
+		return v
 	}
-	return c.Context.Value(key)
+	return value(pc, key)
+}
+
+func (c *valueCtx) value(key interface{}) (interface{}, Context) {
+	if c.key == key {
+		return c.val, nil
+	}
+	return nil, c.Context
+}
+
+func value(c Context, key interface{}) (v interface{}) {
+	for {
+		var pc Context
+		switch tc := c.(type) {
+		default:
+			return c.Value(key)
+		case *valueCtx:
+			v, pc = tc.value(key)
+		case *timerCtx:
+			v, pc = tc.value(key)
+		case *cancelCtx:
+			v, pc = tc.value(key)
+		case *emptyCtx:
+			v, pc = tc.value(key)
+		}
+		if pc == nil {
+			return
+		}
+		c = pc
+	}
 }
