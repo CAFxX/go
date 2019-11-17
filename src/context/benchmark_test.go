@@ -138,3 +138,46 @@ func BenchmarkCheckCanceled(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkValue(b *testing.B) {
+	for _, n := range []int{2, 20, 200} {
+		ctx := Background()
+		for j := 0; j < n; j++ {
+			ctx = WithValue(ctx, struct{}{}, struct{}{})
+		}
+		// measure the time it takes to traverse the whole chain
+		b.Run(fmt.Sprintf("Miss/%d", n), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = ctx.Value(b)
+			}
+		})
+		// measure the time it takes to visit only the first element in the chain
+		b.Run(fmt.Sprintf("Hit/%d", n), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = ctx.Value(struct{}{})
+			}
+		})
+	}
+}
+
+type otherContext struct {
+	Context
+}
+
+func BenchmarkValueUnknownContext(b *testing.B) {
+	for _, n := range []int{2, 20, 200} {
+		ctx := Background()
+		// construct a worst-case chain, in which we have alternated
+		// known and unknown contexts
+		for j := 0; j < n; j += 2 {
+			ctx = otherContext{ctx}
+			ctx = WithValue(ctx, struct{}{}, struct{}{})
+		}
+		// measure the time it takes to traverse the whole chain
+		b.Run(fmt.Sprintf("Miss/%d", n), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = ctx.Value(b)
+			}
+		})
+	}
+}
