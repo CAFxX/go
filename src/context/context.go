@@ -183,12 +183,12 @@ func (*emptyCtx) Err() error {
 }
 
 func (c *emptyCtx) Value(key interface{}) interface{} {
-	v, _ := c.value(key)
+	v, _, _ := c.value(key)
 	return v
 }
 
-func (*emptyCtx) value(interface{}) (interface{}, Context) {
-	return nil, nil
+func (*emptyCtx) value(interface{}) (interface{}, Context, bool) {
+	return nil, nil, false
 }
 
 func (e *emptyCtx) String() string {
@@ -242,7 +242,7 @@ func WithCancel(parent Context) (ctx Context, cancel CancelFunc) {
 
 // newCancelCtx returns an initialized cancelCtx.
 func newCancelCtx(parent Context) cancelCtx {
-	return cancelCtx{Context: parent}
+	return cancelCtx{Context: parent, knownContext: isKnownContext(parent)}
 }
 
 // goroutines counts the number of goroutines ever created; for testing.
@@ -350,21 +350,26 @@ type cancelCtx struct {
 	done     chan struct{}         // created lazily, closed by first cancel call
 	children map[canceler]struct{} // set to nil by the first cancel call
 	err      error                 // set to non-nil by the first cancel call
+
+	knownContext bool
 }
 
 func (c *cancelCtx) Value(key interface{}) interface{} {
-	v, pc :=  c.value(key)
+	v, pc, kc := c.value(key)
 	if pc == nil {
 		return v
 	}
-	return value(pc, key)
+	if kc {
+		return value(pc, key)
+	}
+	return pc.Value(key)
 }
 
-func (c *cancelCtx) value(key interface{}) (interface{}, Context) {
+func (c *cancelCtx) value(key interface{}) (interface{}, Context, bool) {
 	if key == &cancelCtxKey {
-		return c, nil
+		return c, nil, false
 	}
-	return nil, c.Context
+	return nil, c.Context, c.knownContext
 }
 
 func (c *cancelCtx) Done() <-chan struct{} {
@@ -530,14 +535,15 @@ func WithValue(parent Context, key, val interface{}) Context {
 	if !reflectlite.TypeOf(key).Comparable() {
 		panic("key is not comparable")
 	}
-	return &valueCtx{parent, key, val}
+	return &valueCtx{parent, key, val, isKnownContext(parent)}
 }
 
 // A valueCtx carries a key-value pair. It implements Value for that key and
 // delegates all other calls to the embedded Context.
 type valueCtx struct {
 	Context
-	key, val interface{}
+	key, val     interface{}
+	knownContext bool
 }
 
 // stringify tries a bit to stringify v, without using fmt, since we don't
@@ -560,37 +566,52 @@ func (c *valueCtx) String() string {
 }
 
 func (c *valueCtx) Value(key interface{}) interface{} {
-	v, pc := c.value(key)
+	v, pc, kc := c.value(key)
 	if pc == nil {
 		return v
 	}
-	return value(pc, key)
+	if kc {
+		return value(pc, key)
+	}
+	return pc.Value(key)
 }
 
-func (c *valueCtx) value(key interface{}) (interface{}, Context) {
+func (c *valueCtx) value(key interface{}) (interface{}, Context, bool) {
 	if c.key == key {
-		return c.val, nil
+		return c.val, nil, false
 	}
-	return nil, c.Context
+	return nil, c.Context, c.knownContext
+}
+
+func isKnownContext(c Context) bool {
+	switch c.(type) {
+	case *valueCtx, *timerCtx, *cancelCtx, *emptyCtx:
+		return true
+	}
+	return false
 }
 
 func value(c Context, key interface{}) (v interface{}) {
 	for {
 		var pc Context
+		var kc bool
 		switch tc := c.(type) {
 		default:
 			return c.Value(key)
 		case *valueCtx:
-			v, pc = tc.value(key)
+			v, pc, kc = tc.value(key)
 		case *timerCtx:
-			v, pc = tc.value(key)
+			v, pc, kc = tc.value(key)
 		case *cancelCtx:
-			v, pc = tc.value(key)
+			v, pc, kc = tc.value(key)
 		case *emptyCtx:
-			v, pc = tc.value(key)
+			v, pc, kc = tc.value(key)
 		}
 		if pc == nil {
 			return
+		}
+		if !kc {
+			return pc.Value(key)
 		}
 		c = pc
 	}
