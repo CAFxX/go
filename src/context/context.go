@@ -357,6 +357,7 @@ func (c *cancelCtx) Value(key interface{}) interface{} {
 	if pc == nil {
 		return v
 	}
+	// TODO: replace this once we can force inline value(pc, key)
 	switch pc.(type) {
 	case *valueCtx, *timerCtx, *cancelCtx, *emptyCtx:
 		return value(pc, key)
@@ -568,6 +569,7 @@ func (c *valueCtx) Value(key interface{}) interface{} {
 	if pc == nil {
 		return v
 	}
+	// TODO: replace this once we can force inline value(pc, key)
 	switch pc.(type) {
 	case *valueCtx, *timerCtx, *cancelCtx, *emptyCtx:
 		return value(pc, key)
@@ -597,8 +599,9 @@ func (c *valueCtx) value(key interface{}) (interface{}, Context) {
 // c.Value(key) instead.
 // TODO: remove this optimization once the go compiler implements both
 //       speculative devirtualization and tail-call recursion elimination.
-func value(c Context, key interface{}) (v interface{}) {
-        for c != nil {
+func value(c Context, key interface{}) interface{} {
+        for {
+		var v interface{}
                 switch tc := c.(type) {
                 case *valueCtx:
                         v, c = tc.value(key)
@@ -611,6 +614,8 @@ func value(c Context, key interface{}) (v interface{}) {
                 default:
 		        return c.Value(key)
                 }
+		if c == nil {
+			return v
+		}
         }
-	return
 }
