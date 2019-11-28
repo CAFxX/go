@@ -183,12 +183,12 @@ func (*emptyCtx) Err() error {
 }
 
 func (c *emptyCtx) Value(key interface{}) interface{} {
-	v, _, _ := c.value(key)
+	v, _ := c.value(key)
 	return v
 }
 
-func (*emptyCtx) value(interface{}) (interface{}, Context, bool) {
-	return nil, nil, false
+func (*emptyCtx) value(interface{}) (interface{}, Context) {
+	return nil, nil
 }
 
 func (e *emptyCtx) String() string {
@@ -242,7 +242,7 @@ func WithCancel(parent Context) (ctx Context, cancel CancelFunc) {
 
 // newCancelCtx returns an initialized cancelCtx.
 func newCancelCtx(parent Context) cancelCtx {
-	return cancelCtx{Context: parent, knownContext: isKnownContext(parent)}
+	return cancelCtx{Context: parent}
 }
 
 // goroutines counts the number of goroutines ever created; for testing.
@@ -350,26 +350,25 @@ type cancelCtx struct {
 	done     chan struct{}         // created lazily, closed by first cancel call
 	children map[canceler]struct{} // set to nil by the first cancel call
 	err      error                 // set to non-nil by the first cancel call
-
-	knownContext bool
 }
 
 func (c *cancelCtx) Value(key interface{}) interface{} {
-	v, pc, kc := c.value(key)
+	v, pc := c.value(key)
 	if pc == nil {
 		return v
 	}
-	if kc {
+	switch pc.(type) {
+	case *valueCtx, *timerCtx, *cancelCtx, *emptyCtx:
 		return value(pc, key)
 	}
 	return pc.Value(key)
 }
 
-func (c *cancelCtx) value(key interface{}) (interface{}, Context, bool) {
+func (c *cancelCtx) value(key interface{}) (interface{}, Context) {
 	if key == &cancelCtxKey {
-		return c, nil, false
+		return c, nil
 	}
-	return nil, c.Context, c.knownContext
+	return nil, c.Context
 }
 
 func (c *cancelCtx) Done() <-chan struct{} {
@@ -535,7 +534,7 @@ func WithValue(parent Context, key, val interface{}) Context {
 	if !reflectlite.TypeOf(key).Comparable() {
 		panic("key is not comparable")
 	}
-	return &valueCtx{parent, key, val, isKnownContext(parent)}
+	return &valueCtx{parent, key, val}
 }
 
 // A valueCtx carries a key-value pair. It implements Value for that key and
@@ -543,7 +542,6 @@ func WithValue(parent Context, key, val interface{}) Context {
 type valueCtx struct {
 	Context
 	key, val     interface{}
-	knownContext bool
 }
 
 // stringify tries a bit to stringify v, without using fmt, since we don't
@@ -566,21 +564,22 @@ func (c *valueCtx) String() string {
 }
 
 func (c *valueCtx) Value(key interface{}) interface{} {
-	v, pc, kc := c.value(key)
+	v, pc := c.value(key)
 	if pc == nil {
 		return v
 	}
-	if kc {
+	switch pc.(type) {
+	case *valueCtx, *timerCtx, *cancelCtx, *emptyCtx:
 		return value(pc, key)
 	}
 	return pc.Value(key)
 }
 
-func (c *valueCtx) value(key interface{}) (interface{}, Context, bool) {
+func (c *valueCtx) value(key interface{}) (interface{}, Context) {
 	if c.key == key {
-		return c.val, nil, false
+		return c.val, nil
 	}
-	return nil, c.Context, c.knownContext
+	return nil, c.Context
 }
 
 // value is an optimized traversal of a chain of known contexts. Instead
@@ -599,36 +598,19 @@ func (c *valueCtx) value(key interface{}) (interface{}, Context, bool) {
 // TODO: remove this optimization once the go compiler implements both
 //       speculative devirtualization and tail-call recursion elimination.
 func value(c Context, key interface{}) (v interface{}) {
-        for {
-                var kc bool
+        for c != nil {
                 switch tc := c.(type) {
                 case *valueCtx:
-                        v, c, kc = tc.value(key)
+                        v, c = tc.value(key)
                 case *timerCtx:
-                        v, c, kc = tc.value(key)
+                        v, c = tc.value(key)
                 case *cancelCtx:
-                        v, c, kc = tc.value(key)
+                        v, c = tc.value(key)
                 case *emptyCtx:
-                        v, c, kc = tc.value(key)
+                        v, c = tc.value(key)
                 default:
-                        goto fallback
-                }
-                if c == nil {
-                        return
-                }
-                if !kc {
-                        goto fallback
+		        return c.Value(key)
                 }
         }
-
-fallback:
-        return c.Value(key)
-}
-
-func isKnownContext(c Context) bool {
-	switch c.(type) {
-	case *valueCtx, *timerCtx, *cancelCtx, *emptyCtx:
-		return true
-	}
-	return false
+	return
 }
