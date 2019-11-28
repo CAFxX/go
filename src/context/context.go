@@ -583,36 +583,52 @@ func (c *valueCtx) value(key interface{}) (interface{}, Context, bool) {
 	return nil, c.Context, c.knownContext
 }
 
+// value is an optimized traversal of a chain of known contexts. Instead
+// of recusrively performing interface calls to the ancestor contexts, we
+// iterate on the chain and we inline the bodies of the non-recursive
+// (Context).value functions.
+// The (Context).value functions should be inlinable and should return either:
+// - c == nil and the value, if the key matched in this context, or if this
+//   is the last context in the chain
+// - c != nil and kc == true if the parent Context c is a known Context type
+// - c != nil and kc == false if the parent Context c is an unknown Context type
+// To avoid hurting the performance of Context chains containing many unknown
+// Context types, this function should be called preferably if c has already been
+// determined to be a known Context type: otherwise it is faster to call
+// c.Value(key) instead.
+// TODO: remove this optimization once the go compiler implements both
+//       speculative devirtualization and tail-call recursion elimination.
+func value(c Context, key interface{}) (v interface{}) {
+        for {
+                var kc bool
+                switch tc := c.(type) {
+                case *valueCtx:
+                        v, c, kc = tc.value(key)
+                case *timerCtx:
+                        v, c, kc = tc.value(key)
+                case *cancelCtx:
+                        v, c, kc = tc.value(key)
+                case *emptyCtx:
+                        v, c, kc = tc.value(key)
+                default:
+                        goto fallback
+                }
+                if c == nil {
+                        return
+                }
+                if !kc {
+                        goto fallback
+                }
+        }
+
+fallback:
+        return c.Value(key)
+}
+
 func isKnownContext(c Context) bool {
 	switch c.(type) {
 	case *valueCtx, *timerCtx, *cancelCtx, *emptyCtx:
 		return true
 	}
 	return false
-}
-
-func value(c Context, key interface{}) (v interface{}) {
-	for {
-		var pc Context
-		var kc bool
-		switch tc := c.(type) {
-		default:
-			return c.Value(key)
-		case *valueCtx:
-			v, pc, kc = tc.value(key)
-		case *timerCtx:
-			v, pc, kc = tc.value(key)
-		case *cancelCtx:
-			v, pc, kc = tc.value(key)
-		case *emptyCtx:
-			v, pc, kc = tc.value(key)
-		}
-		if pc == nil {
-			return
-		}
-		if !kc {
-			return pc.Value(key)
-		}
-		c = pc
-	}
 }
