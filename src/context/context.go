@@ -360,6 +360,7 @@ func (c *cancelCtx) Value(key interface{}) interface{} {
 	// TODO: replace this once we can force inline value(pc, key)
 	switch pc.(type) {
 	case *valueCtx, *timerCtx, *cancelCtx, *emptyCtx:
+		// fast path for known context types
 		return value(pc, key)
 	}
 	return pc.Value(key)
@@ -572,6 +573,7 @@ func (c *valueCtx) Value(key interface{}) interface{} {
 	// TODO: replace this once we can force inline value(pc, key)
 	switch pc.(type) {
 	case *valueCtx, *timerCtx, *cancelCtx, *emptyCtx:
+		// fast path for known context types
 		return value(pc, key)
 	}
 	return pc.Value(key)
@@ -595,13 +597,19 @@ func (c *valueCtx) value(key interface{}) (interface{}, Context) {
 // - c != nil and kc == false if the parent Context c is an unknown Context type
 // To avoid hurting the performance of Context chains containing many unknown
 // Context types, this function should be called preferably if c has already been
-// determined to be a known Context type: otherwise it is faster to call
-// c.Value(key) instead.
+// determined to be a known Context type: if it is a unknown type it is faster to
+// call c.Value(key) instead.
 // TODO: remove this optimization once the go compiler implements both
 //       speculative devirtualization and tail-call recursion elimination.
+// TODO: if we could force this function to be inlined, we could remove the fast
+//       path guards from the callee, resulting in further speed ups.
 func value(c Context, key interface{}) interface{} {
         for {
 		var v interface{}
+		// Some of the cases (timerCtx and emptyCtx) could be simplified
+		// but we keep them explicit so that changes in their logic are
+		// propagated here automatically. We use the intended inlining
+		// test to ensure that all calls are inlined.
                 switch tc := c.(type) {
                 case *valueCtx:
                         v, c = tc.value(key)
