@@ -95,6 +95,7 @@ func (m *Mutex) lockSlow() {
 			// Try to set mutexWoken flag to inform Unlock
 			// to not wake other blocked goroutines.
 			if !awoke && old&mutexWoken == 0 && old>>mutexWaiterShift != 0 &&
+				atomic.LoadInt32(&m.state) == old &&
 				atomic.CompareAndSwapInt32(&m.state, old, old|mutexWoken) {
 				awoke = true
 			}
@@ -126,7 +127,7 @@ func (m *Mutex) lockSlow() {
 			}
 			new &^= mutexWoken
 		}
-		if atomic.CompareAndSwapInt32(&m.state, old, new) {
+		if atomic.LoadInt32(&m.state) == old && atomic.CompareAndSwapInt32(&m.state, old, new) {
 			if old&(mutexLocked|mutexStarving) == 0 {
 				break // locked the mutex with CAS
 			}
@@ -209,7 +210,7 @@ func (m *Mutex) unlockSlow(new int32) {
 			}
 			// Grab the right to wake someone.
 			new = (old - 1<<mutexWaiterShift) | mutexWoken
-			if atomic.CompareAndSwapInt32(&m.state, old, new) {
+			if atomic.LoadInt32(&m.state) == old && atomic.CompareAndSwapInt32(&m.state, old, new) {
 				runtime_Semrelease(&m.sema, false, 1)
 				return
 			}
