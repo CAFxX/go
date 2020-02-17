@@ -591,11 +591,19 @@ CALLFN(·call536870912, 536870912)
 CALLFN(·call1073741824, 1073741824)
 
 TEXT runtime·procyield(SB),NOSPLIT,$0-0
-	MOVL	cycles+0(FP), AX
+	RDTSC
+	MOVL	cycles+0(FP), BX // how many iterations to spin for
+	IMULQ   $10, BX // each PAUSE conventionally takes 10 cycles
+	SHLQ	$32, DX
+	ADDQ	DX, AX
+	ADDQ    AX, BX // BX is the spinning deadline
 again:
 	PAUSE
-	SUBL	$1, AX
-	JNZ	again
+	RDTSC
+	SHLQ	$32, DX
+	ADDQ	DX, AX
+	CMPQ	AX, BX
+	JLT	again
 	RET
 
 TEXT ·publicationBarrier(SB),NOSPLIT,$0-0

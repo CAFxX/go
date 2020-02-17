@@ -99,7 +99,7 @@ func (m *Mutex) lockSlow() {
 				atomic.CompareAndSwapInt32(&m.state, old, old|mutexWoken) {
 				awoke = true
 			}
-			runtime_doSpin()
+			runtime_doSpin(iter)
 			iter++
 			old = m.state
 			continue

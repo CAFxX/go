@@ -5324,8 +5324,9 @@ func sync_runtime_canSpin(i int) bool {
 
 //go:linkname sync_runtime_doSpin sync.runtime_doSpin
 //go:nosplit
-func sync_runtime_doSpin() {
-	procyield(active_spin_cnt)
+func sync_runtime_doSpin(i int) {
+	// instead of 30+30+30+30, we do 8+16+32+64
+	procyield(8 << i)
 }
 
 var stealOrder randomOrder

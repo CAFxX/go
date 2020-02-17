@@ -62,6 +62,6 @@ func init() {
 func runtime_canSpin(i int) bool
 
 // runtime_doSpin does active spinning.
-func runtime_doSpin()
+func runtime_doSpin(i int)
 
 func runtime_nanotime() int64
