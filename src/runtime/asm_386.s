@@ -590,21 +590,31 @@ CALLFN(·call268435456, 268435456)
 CALLFN(·call536870912, 536870912)
 CALLFN(·call1073741824, 1073741824)
 
+// https://software.intel.com/en-us/articles/a-common-construct-to-avoid-the-contention-of-threads-architecture-agnostic-spin-wait-loops
 TEXT runtime·procyield(SB),NOSPLIT,$0-0
 	RDTSC
 	MOVL	cycles+0(FP), BX // how many iterations to spin for
-	IMULQ   $10, BX // each PAUSE conventionally takes 10 cycles
+	MOVL    $10, SI // each PAUSE conventionally takes 10 cycles
+	IMULQ   SI, BX
 	SHLQ	$32, DX
 	ADDQ	DX, AX
-	ADDQ    AX, BX // BX is the spinning deadline
 again:
+	// AX contains the TSC of the previous iteration (or the initial TSC).
+	MOVQ    AX, CX
 	PAUSE
 	RDTSC
 	SHLQ	$32, DX
 	ADDQ	DX, AX
-	CMPQ	AX, BX
-	JLT	again
+	SUBQ    AX, CX
+	// CX contains how many cycles since the previous iteration; if CX is <= 0 then
+	// the TSC is non-monotonic: this can happen in VMs or when moving between cores. 
+	// In case it's non-monotonic, use 10 as the number of cycles between iterations
+	// (see loop header).
+	CMOVQLS SI, CX
+	SUBQ    CX, BX // decrease the number of cycles left to spin
+	JA	again
 	RET
+
 
 TEXT ·publicationBarrier(SB),NOSPLIT,$0-0
 	// Stores are already ordered on x86, so this is just a
