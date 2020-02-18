@@ -169,6 +169,7 @@ func breakpoint()
 func reflectcall(argtype *_type, fn, arg unsafe.Pointer, argsize uint32, retoffset uint32)
 
 func procyield(cycles uint32)
+func procyield1()
 
 type neverCallThisFunction struct{}
 

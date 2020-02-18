@@ -604,6 +604,9 @@ again:
 	JA	again
 	RET
 
+TEXT runtime·procyield1(SB),NOSPLIT,$0-0
+	PAUSE
+	RET
 
 TEXT ·publicationBarrier(SB),NOSPLIT,$0-0
 	// Stores are already ordered on x86, so this is just a

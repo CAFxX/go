@@ -495,6 +495,9 @@ TEXT callfnMVC<>(SB),NOSPLIT|NOFRAME,$0-0
 TEXT runtime·procyield(SB),NOSPLIT,$0-0
 	RET
 
+TEXT runtime·procyield1(SB),NOSPLIT,$0-0
+	RET
+
 // void jmpdefer(fv, sp);
 // called from deferreturn.
 // 1. grab stored LR for caller

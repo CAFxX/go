@@ -270,6 +270,9 @@ TEXT runtime·jmpdefer(SB), NOSPLIT|NOFRAME, $0-16
 TEXT runtime·procyield(SB),NOSPLIT,$0-0
 	RET
 
+TEXT runtime·procyield1(SB),NOSPLIT,$0-0
+	RET
+
 // Switch to m->g0's stack, call fn(g).
 // Fn must never return. It should gogo(&g->sched)
 // to keep running g.

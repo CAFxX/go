@@ -229,6 +229,9 @@ TEXT ·publicationBarrier(SB), NOSPLIT, $0-0
 TEXT runtime·procyield(SB), NOSPLIT, $0-0 // FIXME
 	RET
 
+TEXT runtime·procyield1(SB), NOSPLIT, $0-0 // FIXME
+	RET
+
 TEXT runtime·breakpoint(SB), NOSPLIT, $0-0
 	UNDEF
 

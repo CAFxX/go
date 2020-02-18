@@ -834,6 +834,10 @@ yieldloop:
 	SUB	$1, R1
 	B yieldloop
 
+TEXT runtime·procyield1(SB),NOSPLIT|NOFRAME,$0
+	WORD	$0xe320f001	// YIELD (NOP pre-ARMv6K)
+	RET
+
 // Called from cgo wrappers, this function returns g->m->curg.stack.hi.
 // Must obey the gcc calling convention.
 TEXT _cgo_topofstack(SB),NOSPLIT,$8

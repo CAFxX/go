@@ -792,7 +792,7 @@ func casgstatus(gp *g, oldval, newval uint32) {
 		}
 		if nanotime() < nextYield {
 			for x := 0; x < 10 && gp.atomicstatus != oldval; x++ {
-				procyield(1)
+				procyield1()
 			}
 		} else {
 			osyield()

@@ -398,6 +398,9 @@ CALLFN(·call1073741824, 1073741824)
 TEXT runtime·procyield(SB),NOSPLIT,$0-0
 	RET
 
+TEXT runtime·procyield1(SB),NOSPLIT,$0-0
+	RET
+
 // void jmpdefer(fv, sp);
 // called from deferreturn.
 // 1. grab stored LR for caller

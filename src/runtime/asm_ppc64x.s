@@ -520,6 +520,9 @@ again:
 	OR	R6, R6, R6	// Set PPR priority back to medium-low
 	RET
 
+TEXT runtime·procyield1(SB),NOSPLIT|NOFRAME,$0-0
+	RET
+
 // void jmpdefer(fv, sp);
 // called from deferreturn.
 // 1. grab stored LR for caller
