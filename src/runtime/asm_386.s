@@ -590,35 +590,51 @@ CALLFN(·call268435456, 268435456)
 CALLFN(·call536870912, 536870912)
 CALLFN(·call1073741824, 1073741824)
 
-// https://software.intel.com/en-us/articles/a-common-construct-to-avoid-the-contention-of-threads-architecture-agnostic-spin-wait-loops
+// Implements https://software.intel.com/en-us/articles/a-common-construct-to-avoid-the-contention-of-threads-architecture-agnostic-spin-wait-loops
+// with the additional constraint that RDTSC can be non-monotonic:
+//   curTS := RDTSC()
+//   cycles := iterations * PAUSE_CYCLES
+//   for cycles > 0 {
+//     PAUSE()
+//     prevTS, curTS := curTS, RDTSC()
+//     delta := curTS-prevTS
+//     if delta <= 0 {
+//       // handle non-monotonic RDTSC
+//       delta = PAUSE_CYCLES
+//     }
+//     cycles -= delta
+//   }
 TEXT runtime·procyield(SB),NOSPLIT,$0-0
 	RDTSC
 	MOVL	cycles+0(FP), BX // how many iterations to spin for
-	MOVL    $10, SI // each PAUSE conventionally takes 10 cycles
-	IMULQ   SI, BX
+	// The latency of PAUSE instruction in prior generation microarchitecture is about 10 cycles,
+	// whereas on Skylake microarchitecture it has been extended to as many as 140 cycles.
+	// https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-optimization-manual.pdf
+	MOVL    $10, SI // SI: each PAUSE conventionally takes 10 cycles (reg needed by CMOV)
+	IMULQ   SI, BX // BX: how many CPU cycles to spin for
 	SHLQ	$32, DX
-	ADDQ	DX, AX
+	ADDQ	AX, DX // DX: initial TS
 again:
-	// AX contains the TSC of the previous iteration (or the initial TSC).
-	MOVQ    AX, CX
+	MOVQ    DX, CX // CX: TS of the previous iteration (or initial TS)
 	PAUSE
 	RDTSC
 	SHLQ	$32, DX
-	ADDQ	DX, AX
-	SUBQ    AX, CX
-	// CX contains how many cycles since the previous iteration; if CX is <= 0 then
+	ADDQ	AX, DX // DX: current TS
+	MOVQ    DX, AX // DX needs to be preserved for the next iteration
+	SUBQ    CX, AX
+	// AX contains how many cycles since the previous iteration; if AX is <= 0 then
 	// the TSC is non-monotonic: this can happen in VMs or when moving between cores. 
 	// In case it's non-monotonic, use 10 as the number of cycles between iterations
 	// (see loop header).
-	CMOVQLS SI, CX
-	SUBQ    CX, BX // decrease the number of cycles left to spin
+	CMOVQLS SI, AX
+	SUBQ    AX, BX // decrease the number of cycles left to spin
 	JA	again
 	RET
 
 TEXT runtime·procyield1(SB),NOSPLIT,$0-0
 	PAUSE
 	RET
-	
+
 TEXT ·publicationBarrier(SB),NOSPLIT,$0-0
 	// Stores are already ordered on x86, so this is just a
 	// compile barrier.

@@ -28,7 +28,7 @@ const (
 	mutex_sleeping = 2
 
 	active_spin     = 4
-	active_spin_cnt = 30
+	active_spin_cnt = 8
 	passive_spin    = 1
 )
 
@@ -80,7 +80,7 @@ func lock(l *mutex) {
 					return
 				}
 			}
-			procyield(active_spin_cnt)
+			procyield(active_spin_cnt << i)
 		}
 
 		// Try for lock, rescheduling.

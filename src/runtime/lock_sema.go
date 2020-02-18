@@ -28,7 +28,7 @@ const (
 	locked uintptr = 1
 
 	active_spin     = 4
-	active_spin_cnt = 30
+	active_spin_cnt = 8
 	passive_spin    = 1
 )
 
@@ -62,7 +62,7 @@ Loop:
 			i = 0
 		}
 		if i < spin {
-			procyield(active_spin_cnt)
+			procyield(active_spin_cnt << i)
 		} else if i < spin+passive_spin {
 			osyield()
 		} else {
