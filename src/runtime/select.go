@@ -162,6 +162,43 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 		pollorder[j] = uint16(i)
 	}
 
+	// Fast-path: attempt non-blocking operations on all cases; if any
+	// case succeeds (including if there is a default case), go with it
+	// and skip locking and all the of the heavy lifting below.
+	// If none succeed, fallback to the slow-path.
+	const noDefaultCase = -1
+	defCase := noDefaultCase
+	for i := 0; i < ncases; i++ {
+		n := int(pollorder[i])
+		cas := scases[n]
+		switch cas.kind {
+		case caseRecv:
+			// TODO: lift/outline the fast path checks from chanrecv
+			if selected, received := chanrecv(cas.c, cas.elem, false); selected {
+				return n, received
+			}
+		case caseSend:
+			// TODO: lift/outline the fast path checks from chansend
+			if chansend(cas.c, cas.elem, false, cas.pc) {
+				return n, false
+			}
+		case caseDefault:
+			if defCase != -1 {
+				throw("multiple default cases in select")
+			}
+			defCase = n
+		case caseNil:
+			// operations on nil channels always block: skip them
+		default:
+			throw("unknown select case")
+		}
+	}
+	if defCase != noDefaultCase {
+		// No non-default case was ready and we have a default case:
+		// select the default case.
+		return defCase, false
+	}
+
 	// sort the cases by Hchan address to get the locking order.
 	// simple heap sort, to guarantee n log n time and constant stack footprint.
 	for i := 0; i < ncases; i++ {
