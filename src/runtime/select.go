@@ -7,6 +7,7 @@ package runtime
 // This file contains the implementation of Go select statements.
 
 import (
+	"runtime/internal/atomic"
 	"unsafe"
 )
 
@@ -173,12 +174,16 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 		cas := scases[n]
 		switch cas.kind {
 		case caseRecv:
-			// TODO: lift/outline the fast path checks from chanrecv
+			if empty(cas.c) && atomic.Load(&cas.c.closed) == 0 {
+				continue
+			}
 			if selected, received := chanrecv(cas.c, cas.elem, false); selected {
 				return n, received
 			}
 		case caseSend:
-			// TODO: lift/outline the fast path checks from chansend
+			if cas.c.closed == 0 && full(cas.c) {
+				continue
+			}
 			if chansend(cas.c, cas.elem, false, cas.pc) {
 				return n, false
 			}
