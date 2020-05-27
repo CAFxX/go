@@ -140,14 +140,6 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 		}
 	}
 
-	var t0 int64
-	if blockprofilerate > 0 {
-		t0 = cputicks()
-		for i := 0; i < ncases; i++ {
-			scases[i].releasetime = -1
-		}
-	}
-
 	// The compiler rewrites selects that statically have
 	// only 0 or 1 cases plus default into simpler constructs.
 	// The only way we can end up with such small sel.ncase
@@ -167,41 +159,62 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 	// case succeeds (including if there is a default case), go with it
 	// and skip locking and all the of the heavy lifting below.
 	// If none succeed, fallback to the slow-path.
+	// TODO: this could be open-coded by the compiler instead of being
+	// implemented in the runtime.
 	const noDefaultCase = -1
-	defCase := noDefaultCase
+	defaultCase := noDefaultCase
 	for i := 0; i < ncases; i++ {
 		n := int(pollorder[i])
-		cas := scases[n]
+		cas := &scases[n]
 		switch cas.kind {
 		case caseRecv:
 			if empty(cas.c) && atomic.Load(&cas.c.closed) == 0 {
+				// Fast path for receive from empty/non-closed channel: would block
 				continue
 			}
 			if selected, received := chanrecv(cas.c, cas.elem, false); selected {
+				if debugSelect {
+					print("select: fast: recv: n=", n, " received=", received, "\n")
+				}
 				return n, received
 			}
 		case caseSend:
 			if cas.c.closed == 0 && full(cas.c) {
+				// Fast path for send to full/non-closed channel: would block
 				continue
 			}
 			if chansend(cas.c, cas.elem, false, cas.pc) {
+				if debugSelect {
+					print("select: fast: send: n=", n, "\n")
+				}
 				return n, false
 			}
 		case caseDefault:
-			if defCase != -1 {
-				throw("multiple default cases in select")
+			if defaultCase != noDefaultCase {
+				throw("select: fast: multiple default cases")
 			}
-			defCase = n
+			defaultCase = n
 		case caseNil:
-			// operations on nil channels always block: skip them
+			// Operations on nil channels always block: skip them
 		default:
-			throw("unknown select case")
+			throw("select: fast: unknown case type")
 		}
 	}
-	if defCase != noDefaultCase {
+	if defaultCase != noDefaultCase {
 		// No non-default case was ready and we have a default case:
 		// select the default case.
-		return defCase, false
+		if debugSelect {
+			print("select: fast: default: n=", defaultCase, "\n")
+		}
+		return defaultCase, false
+	}
+
+	var t0 int64
+	if blockprofilerate > 0 {
+		t0 = cputicks()
+		for i := 0; i < ncases; i++ {
+			scases[i].releasetime = -1
+		}
 	}
 
 	// sort the cases by Hchan address to get the locking order.
