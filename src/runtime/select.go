@@ -131,15 +131,6 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 	pollorder := order1[:ncases:ncases]
 	lockorder := order1[ncases:][:ncases:ncases]
 
-	// Replace send/receive cases involving nil channels with
-	// caseNil so logic below can assume non-nil channel.
-	for i := range scases {
-		cas := &scases[i]
-		if cas.c == nil && cas.kind != caseDefault {
-			*cas = scase{}
-		}
-	}
-
 	// The compiler rewrites selects that statically have
 	// only 0 or 1 cases plus default into simpler constructs.
 	// The only way we can end up with such small sel.ncase
@@ -155,21 +146,25 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 		pollorder[j] = uint16(i)
 	}
 
-	// Fast-path: attempt non-blocking operations on all cases; if any
-	// case succeeds (including if there is a default case), go with it
-	// and skip locking and all the of the heavy lifting below.
+	// Fast-path: attempt non-blocking operations on all non-default cases;
+	// if any case succeeds (excluding the default case), go with it and skip
+	// locking and all the of the heavy lifting below.
 	// If none succeed, fallback to the slow-path.
 	// TODO: this could be open-coded by the compiler instead of being
 	// implemented in the runtime.
-	const noDefaultCase = -1
-	defaultCase := noDefaultCase
 	for i := 0; i < ncases; i++ {
 		n := int(pollorder[i])
 		cas := &scases[n]
+		if cas.c == nil && cas.kind != caseDefault {
+			// Replace send/receive cases involving nil channels with caseNil
+			// so logic in the rest of the function can assume non-nil channel.
+			*cas = scase{}
+			continue
+		}
 		switch cas.kind {
 		case caseRecv:
 			if empty(cas.c) && atomic.Load(&cas.c.closed) == 0 {
-				// Fast path for receive from empty/non-closed channel: would block
+				// Fast path for receive from empty, non-closed channel: would block
 				continue
 			}
 			if selected, received := chanrecv(cas.c, cas.elem, false); selected {
@@ -180,7 +175,7 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 			}
 		case caseSend:
 			if cas.c.closed == 0 && full(cas.c) {
-				// Fast path for send to full/non-closed channel: would block
+				// Fast path for send to full, non-closed channel: would block
 				continue
 			}
 			if chansend(cas.c, cas.elem, false, cas.pc) {
@@ -190,23 +185,19 @@ func selectgo(cas0 *scase, order0 *uint16, ncases int) (int, bool) {
 				return n, false
 			}
 		case caseDefault:
-			if defaultCase != noDefaultCase {
-				throw("select: fast: multiple default cases")
-			}
-			defaultCase = n
+			// We can not simply note the default case and select it if none of the other
+			// cases match.
+			// See https://go-review.googlesource.com/c/go/+/7570/16/src/runtime/select.go#287
+			// for an example of why this mechanism would break down. There are possible
+			// alternatives, including those mentioned in the linked comment, but it's unclear
+			// whether they would help.
+			// For this reason we skip default cases, and therefore a select with a default case
+			// will need to take the slow path if none of the other cases are ready.
 		case caseNil:
 			// Operations on nil channels always block: skip them
 		default:
 			throw("select: fast: unknown case type")
 		}
-	}
-	if defaultCase != noDefaultCase {
-		// No non-default case was ready and we have a default case:
-		// select the default case.
-		if debugSelect {
-			print("select: fast: default: n=", defaultCase, "\n")
-		}
-		return defaultCase, false
 	}
 
 	var t0 int64
