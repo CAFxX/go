@@ -1953,8 +1953,8 @@ func BenchmarkTrimASCII(b *testing.B) {
 	cs := "0123456789abcdef"
 	for k := 1; k <= 4096; k <<= 4 {
 		for j := 1; j <= 16; j <<= 1 {
+			x := Repeat([]byte(cs[:j]), k) // Always matches set
 			b.Run(fmt.Sprintf("%d:%d", k, j), func(b *testing.B) {
-				x := Repeat([]byte(cs[:j]), k) // Always matches set
 				for i := 0; i < b.N; i++ {
 					Trim(x[:k], cs[:j])
 				}
@@ -1966,11 +1966,11 @@ func BenchmarkTrimASCII(b *testing.B) {
 func BenchmarkIndexPeriodic(b *testing.B) {
 	key := []byte{1, 1}
 	for _, skip := range [...]int{2, 4, 8, 16, 32, 64} {
+		buf := make([]byte, 1<<16)
+		for i := 0; i < len(buf); i += skip {
+			buf[i] = 1
+		}
 		b.Run(fmt.Sprintf("IndexPeriodic%d", skip), func(b *testing.B) {
-			buf := make([]byte, 1<<16)
-			for i := 0; i < len(buf); i += skip {
-				buf[i] = 1
-			}
 			for i := 0; i < b.N; i++ {
 				Index(buf, key)
 			}

@@ -861,69 +861,161 @@ func lastIndexFunc(s []byte, f func(r rune) bool, truth bool) int {
 	return -1
 }
 
-// asciiSet is a 32-byte value, where each bit represents the presence of a
-// given ASCII character in the set. The 128-bits of the lower 16 bytes,
-// starting with the least-significant bit of the lowest word to the
-// most-significant bit of the highest word, map to the full range of all
-// 128 ASCII characters. The 128-bits of the upper 16 bytes will be zeroed,
-// ensuring that any non-ASCII character will be reported as not in the set.
-type asciiSet [8]uint32
+// asciiSet is a 16-byte value, where each bit represents the presence of a
+// given ASCII character in the set.
+type asciiSet [4]uint32
 
 // makeASCIISet creates a set of ASCII characters and reports whether all
 // characters in chars are ASCII.
 func makeASCIISet(chars string) (as asciiSet, ok bool) {
+	if len(chars) > utf8.RuneSelf {
+		// Assuming the cutset contains no duplicates, it is pointless
+		// to try to build a asciiSet if the cutset is longer than the
+		// total number of ASCII characters (that corresponds to RuneSelf
+		// as utf8 is designed to encode all ASCII characters as ASCII).
+		// In this case we bail out early, and fall back to the generic
+		// unicode code path, to avoid wasting time partially building
+		// an asciiSet that almost certainly will not be used.
+		return
+	}
 	for i := 0; i < len(chars); i++ {
 		c := chars[i]
 		if c >= utf8.RuneSelf {
-			return as, false
+			return
 		}
-		as[c>>5] |= 1 << uint(c&31)
+		as[c/32] |= 1 << (c % 32)
 	}
 	return as, true
 }
 
 // contains reports whether c is inside the set.
 func (as *asciiSet) contains(c byte) bool {
-	return (as[c>>5] & (1 << uint(c&31))) != 0
+	return c < utf8.RuneSelf && (as[c/32]&(1<<(c%32))) != 0
 }
 
-func makeCutsetFunc(cutset string) func(r rune) bool {
-	if len(cutset) == 1 && cutset[0] < utf8.RuneSelf {
-		return func(r rune) bool {
-			return r == rune(cutset[0])
+// trimRightByte and trimLeftByte are specialized versions of Trim* for
+// the extremely common case in which the cutset is a single ASCII character.
+func trimRightByte(s []byte, b byte) []byte {
+	for len(s) > 0 && s[len(s)-1] == b {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+func trimLeftByte(s []byte, b byte) []byte {
+	for len(s) > 0 && s[0] == b {
+		s = s[1:]
+	}
+	return s
+}
+
+// trimRightASCII and trimLeftASCII are specialized versions of Trim* for
+// the common case in which the cutset is composed exclusively of ASCII characters.
+func trimRightASCII(as *asciiSet, s []byte) []byte {
+	for len(s) > 0 {
+		if !as.contains(s[len(s)-1]) {
+			break
+		}
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+func trimLeftASCII(as *asciiSet, s []byte) []byte {
+	for len(s) > 0 {
+		if !as.contains(s[0]) {
+			break
+		}
+		s = s[1:]
+	}
+	return s
+}
+
+// trimRightUnicode and trimLeftUnicode are the generic Trim* versions
+// that can operate on arbitrary Unicode cutsets.
+func trimRightUnicode(s []byte, cutset string) []byte {
+	for len(s) > 0 {
+		r, n := rune(s[len(s)-1]), 1
+		if r >= utf8.RuneSelf {
+			r, n = utf8.DecodeLastRune(s)
+		}
+		if !containsRune(cutset, r) {
+			break
+		}
+		s = s[:len(s)-n]
+	}
+	return s
+}
+
+func trimLeftUnicode(s []byte, cutset string) []byte {
+	for len(s) > 0 {
+		r, n := rune(s[0]), 1
+		if r >= utf8.RuneSelf {
+			r, n = utf8.DecodeRune(s)
+		}
+		if !containsRune(cutset, r) {
+			break
+		}
+		s = s[n:]
+	}
+	return s
+}
+
+// containsRune is a simplified version of strings.ContainsRune,
+// as we can not import string and we want to avoid using
+// bytes.ContainsRune to avoid allocating a temporary copy of s.
+func containsRune(s string, r rune) bool {
+	for _, c := range s {
+		if c == r {
+			return true
 		}
 	}
-	if as, isASCII := makeASCIISet(cutset); isASCII {
-		return func(r rune) bool {
-			return r < utf8.RuneSelf && as.contains(byte(r))
-		}
-	}
-	return func(r rune) bool {
-		for _, c := range cutset {
-			if c == r {
-				return true
-			}
-		}
-		return false
-	}
+	return false
 }
 
 // Trim returns a subslice of s by slicing off all leading and
 // trailing UTF-8-encoded code points contained in cutset.
 func Trim(s []byte, cutset string) []byte {
-	return TrimFunc(s, makeCutsetFunc(cutset))
+	if len(s) == 0 || cutset == "" {
+		return s
+	}
+	if len(cutset) == 1 && cutset[0] < utf8.RuneSelf {
+		return trimRightByte(trimLeftByte(s, cutset[0]), cutset[0])
+	}
+	if as, ok := makeASCIISet(cutset); ok {
+		return trimRightASCII(&as, trimLeftASCII(&as, s))
+	}
+	return trimRightUnicode(trimLeftUnicode(s, cutset), cutset)
 }
 
 // TrimLeft returns a subslice of s by slicing off all leading
 // UTF-8-encoded code points contained in cutset.
 func TrimLeft(s []byte, cutset string) []byte {
-	return TrimLeftFunc(s, makeCutsetFunc(cutset))
+	if len(s) == 0 || cutset == "" {
+		return s
+	}
+	if len(cutset) == 1 && cutset[0] < utf8.RuneSelf {
+		return trimLeftByte(s, cutset[0])
+	}
+	if as, ok := makeASCIISet(cutset); ok {
+		return trimLeftASCII(&as, s)
+	}
+	return trimLeftUnicode(s, cutset)
 }
 
 // TrimRight returns a subslice of s by slicing off all trailing
 // UTF-8-encoded code points that are contained in cutset.
 func TrimRight(s []byte, cutset string) []byte {
-	return TrimRightFunc(s, makeCutsetFunc(cutset))
+	if len(s) == 0 || cutset == "" {
+		return s
+	}
+	if len(cutset) == 1 && cutset[0] < utf8.RuneSelf {
+		return trimRightByte(s, cutset[0])
+	}
+	if as, ok := makeASCIISet(cutset); ok {
+		return trimRightASCII(&as, s)
+	}
+	return trimRightUnicode(s, cutset)
 }
 
 // TrimSpace returns a subslice of s by slicing off all leading and
