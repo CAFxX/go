@@ -738,7 +738,7 @@ func TrimLeftFunc(s string, f func(rune) bool) string {
 // Unicode code points c satisfying f(c) removed.
 func TrimRightFunc(s string, f func(rune) bool) string {
 	i := lastIndexFunc(s, f, false)
-	if i >= 0 && s[i] >= utf8.RuneSelf {
+	if i >= 0 {
 		_, wid := utf8.DecodeRuneInString(s[i:])
 		i += wid
 	} else {
@@ -971,15 +971,11 @@ func EqualFold(s, t string) bool {
 	for s != "" && t != "" {
 		// Extract first rune from each string.
 		var sr, tr rune
-		if s[0] < utf8.RuneSelf {
-			sr, s = rune(s[0]), s[1:]
-		} else {
+		{
 			r, size := utf8.DecodeRuneInString(s)
 			sr, s = r, s[size:]
 		}
-		if t[0] < utf8.RuneSelf {
-			tr, t = rune(t[0]), t[1:]
-		} else {
+		{
 			r, size := utf8.DecodeRuneInString(t)
 			tr, t = r, t[size:]
 		}

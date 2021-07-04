@@ -477,11 +477,7 @@ func FieldsFunc(s []byte, f func(rune) bool) [][]byte {
 	// more efficient, possibly due to cache effects.
 	start := -1 // valid span start if >= 0
 	for i := 0; i < len(s); {
-		size := 1
-		r := rune(s[i])
-		if r >= utf8.RuneSelf {
-			r, size = utf8.DecodeRune(s[i:])
-		}
+		r, size := utf8.DecodeRune(s[i:])
 		if f(r) {
 			if start >= 0 {
 				spans = append(spans, span{start, i})
@@ -555,11 +551,7 @@ func Map(mapping func(r rune) rune, s []byte) []byte {
 	nbytes := 0        // number of bytes encoded in b
 	b := make([]byte, maxbytes)
 	for i := 0; i < len(s); {
-		wid := 1
-		r := rune(s[i])
-		if r >= utf8.RuneSelf {
-			r, wid = utf8.DecodeRune(s[i:])
-		}
+		r, wid := utf8.DecodeRune(s[i:])
 		r = mapping(r)
 		if r >= 0 {
 			rl := utf8.RuneLen(r)
@@ -831,11 +823,7 @@ func LastIndexFunc(s []byte, f func(r rune) bool) int {
 func indexFunc(s []byte, f func(r rune) bool, truth bool) int {
 	start := 0
 	for start < len(s) {
-		wid := 1
-		r := rune(s[start])
-		if r >= utf8.RuneSelf {
-			r, wid = utf8.DecodeRune(s[start:])
-		}
+		r, wid := utf8.DecodeRune(s[start:])
 		if f(r) == truth {
 			return start
 		}
@@ -849,10 +837,7 @@ func indexFunc(s []byte, f func(r rune) bool, truth bool) int {
 // inverted.
 func lastIndexFunc(s []byte, f func(r rune) bool, truth bool) int {
 	for i := len(s); i > 0; {
-		r, size := rune(s[i-1]), 1
-		if r >= utf8.RuneSelf {
-			r, size = utf8.DecodeLastRune(s[0:i])
-		}
+		r, size := utf8.DecodeLastRune(s[0:i])
 		i -= size
 		if f(r) == truth {
 			return i
@@ -1038,15 +1023,11 @@ func EqualFold(s, t []byte) bool {
 	for len(s) != 0 && len(t) != 0 {
 		// Extract first rune from each.
 		var sr, tr rune
-		if s[0] < utf8.RuneSelf {
-			sr, s = rune(s[0]), s[1:]
-		} else {
+		{
 			r, size := utf8.DecodeRune(s)
 			sr, s = r, s[size:]
 		}
-		if t[0] < utf8.RuneSelf {
-			tr, t = rune(t[0]), t[1:]
-		} else {
+		{
 			r, size := utf8.DecodeRune(t)
 			tr, t = r, t[size:]
 		}

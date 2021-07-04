@@ -149,6 +149,16 @@ func FullRuneInString(s string) bool {
 // out of range, or is not the shortest possible UTF-8 encoding for the
 // value. No other validation is performed.
 func DecodeRune(p []byte) (r rune, size int) {
+	// Inlineable fast path for ASCII characters.
+	if len(p) > 0 && p[0] < RuneSelf {
+		r, size = rune(p[0]), 1
+	} else {
+		r, size = decodeRune(p)
+	}
+	return
+}
+
+func decodeRune(p []byte) (r rune, size int) {
 	n := len(p)
 	if n < 1 {
 		return RuneError, 0
@@ -197,6 +207,16 @@ func DecodeRune(p []byte) (r rune, size int) {
 // out of range, or is not the shortest possible UTF-8 encoding for the
 // value. No other validation is performed.
 func DecodeRuneInString(s string) (r rune, size int) {
+	// Inlineable fast path for ASCII characters.
+	if len(s) > 0 && s[0] < RuneSelf {
+		r, size = rune(s[0]), 1
+	} else {
+		r, size = decodeRuneInString(s)
+	}
+	return
+}
+
+func decodeRuneInString(s string) (r rune, size int) {
 	n := len(s)
 	if n < 1 {
 		return RuneError, 0
@@ -245,15 +265,23 @@ func DecodeRuneInString(s string) (r rune, size int) {
 // out of range, or is not the shortest possible UTF-8 encoding for the
 // value. No other validation is performed.
 func DecodeLastRune(p []byte) (r rune, size int) {
+	// Inlineable fast path for ASCII characters.
+	if i := len(p) - 1; i >= 0 && p[i] < RuneSelf {
+		r, size = rune(p[i]), 1
+	} else {
+		r, size = decodeLastRune(p)
+	}
+	return
+}
+
+func decodeLastRune(p []byte) (r rune, size int) {
+	// We assume that the rune is not an ASCII character, as the fast path
+	// above has already taken care of that case.
 	end := len(p)
 	if end == 0 {
 		return RuneError, 0
 	}
 	start := end - 1
-	r = rune(p[start])
-	if r < RuneSelf {
-		return r, 1
-	}
 	// guard against O(n^2) behavior when traversing
 	// backwards through strings with long sequences of
 	// invalid UTF-8.
@@ -285,15 +313,23 @@ func DecodeLastRune(p []byte) (r rune, size int) {
 // out of range, or is not the shortest possible UTF-8 encoding for the
 // value. No other validation is performed.
 func DecodeLastRuneInString(s string) (r rune, size int) {
+	// Inlineable fast path for ASCII characters.
+	if i := len(s) - 1; i >= 0 && s[i] < RuneSelf {
+		r, size = rune(s[i]), 1
+	} else {
+		r, size = decodeLastRuneInString(s)
+	}
+	return
+}
+
+func decodeLastRuneInString(s string) (r rune, size int) {
+	// We assume that the rune is not an ASCII character, as the fast path
+	// above has already taken care of that case.
 	end := len(s)
 	if end == 0 {
 		return RuneError, 0
 	}
 	start := end - 1
-	r = rune(s[start])
-	if r < RuneSelf {
-		return r, 1
-	}
 	// guard against O(n^2) behavior when traversing
 	// backwards through strings with long sequences of
 	// invalid UTF-8.

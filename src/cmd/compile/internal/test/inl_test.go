@@ -127,6 +127,10 @@ func TestIntendedInlining(t *testing.T) {
 			"FullRuneInString",
 			"RuneLen",
 			"ValidRune",
+			"DecodeRune",
+			"DecodeRuneInString",
+			"DecodeLastRune",
+			"DecodeLastRuneInString",
 		},
 		"reflect": {
 			"Value.CanAddr",

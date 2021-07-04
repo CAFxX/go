@@ -1097,10 +1097,7 @@ formatLoop:
 			break
 		}
 
-		verb, size := rune(format[i]), 1
-		if verb >= utf8.RuneSelf {
-			verb, size = utf8.DecodeRuneInString(format[i:])
-		}
+		verb, size := utf8.DecodeRuneInString(format[i:])
 		i += size
 
 		switch {
