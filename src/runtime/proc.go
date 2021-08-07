@@ -3663,6 +3663,14 @@ func goexit0(gp *g) {
 
 	dropg()
 
+	if gp.realstacklo != 0 {
+		gp.stack.lo = gp.realstacklo
+		gp.stackguard0 = gp.stack.lo + _StackGuard
+		gp.realstacklo = 0
+	}
+	gstacksizeupdate(_g_.gopc, _g_.highwater)
+	_g_.highwater = 0
+
 	if GOARCH == "wasm" { // no threads yet on wasm
 		gfput(_g_.m.p.ptr(), gp)
 		schedule() // never returns
@@ -4300,9 +4308,21 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	}
 
 	_p_ := _g_.m.p.ptr()
-	newg := gfget(_p_)
+	stackSize := gstacksizepredict(callerpc)
+	var newg *g
+	if stackSize != _StackMin {
+		print("predicted stack size=", stackSize, " for pc=", callerpc)
+	} else {
+		newg = gfget(_p_)
+	}
 	if newg == nil {
-		newg = malg(_StackMin)
+		newg = malg(stackSize)
+		if gstacksizeenabled {
+			newg.realstacklo = newg.stack.lo
+			newg.stack.lo += (newg.stack.hi - newg.stack.lo) / 2
+			newg.stackguard0 = newg.stack.lo + _StackGuard
+			*(*uintptr)(unsafe.Pointer(newg.stack.lo)) = 0
+		}
 		casgstatus(newg, _Gidle, _Gdead)
 		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
 	}
@@ -4530,6 +4550,102 @@ func gfpurge(_p_ *p) {
 	sched.gFree.stack.pushAll(stackQ)
 	sched.gFree.n += inc
 	unlock(&sched.gFree.lock)
+}
+
+var gstacksizeenabled = true
+
+//go:nosplit
+func gstacksizepredict(pc uintptr) int32 {
+	if !gstacksizeenabled {
+		return _StackMin
+	}
+	return int32(1) << gstacksizeinit().entryforPC(pc).stacksize()
+}
+
+//go:nosplit
+func gstacksizeupdate(pc uintptr, highwater uint8) {
+	if !gstacksizeenabled {
+		return
+	}
+	gstacksizeinit().entryforPC(pc).update(highwater)
+}
+
+//go:nosplit
+func gstacksizeinit() *gstacksize {
+	cycle := atomic.Load(&work.cycles) // TODO: can we move invalidation to the GC stop-the-world?
+	_p_ := getg().m.p.ptr()
+	if cycle != _p_.gstacksize.cycle {
+		_p_.gstacksize.cycle = cycle
+		_p_.gstacksize.initseed()
+		for i := range _p_.gstacksize.entries {
+			_p_.gstacksize.entries[i] = 0
+		}
+	}
+	return &_p_.gstacksize
+}
+
+type (
+	gstacksize struct {
+		entries [32]gstacksizeentry
+		seed    uintptr
+		cycle   uint32
+	}
+	gstacksizeentry uint8
+)
+
+//go:nosplit
+func (g *gstacksize) initseed() {
+	if unsafe.Sizeof(g.seed) == 8 {
+		g.seed = uintptr(fastrand()) | (uintptr(fastrand()) << 32)
+	} else {
+		g.seed = uintptr(fastrand())
+	}
+}
+
+//go:nosplit
+func (s *gstacksize) entryforPC(pc uintptr) *gstacksizeentry {
+	var pch uintptr
+	if unsafe.Sizeof(pc) == 8 {
+		pch = memhash64(noescape(unsafe.Pointer(&pc)), s.seed)
+	} else {
+		pch = memhash32(noescape(unsafe.Pointer(&pc)), s.seed)
+	}
+	return &s.entries[pch%uintptr(len(s.entries))]
+}
+
+//go:nosplit
+func (e gstacksizeentry) stacksize() uint8 {
+	return (uint8(e) >> 5) + 11
+}
+
+//go:nosplit
+func (e gstacksizeentry) frequency() int {
+	return int(e) & ((1 << 5) - 1)
+}
+
+//go:nosplit
+func (e *gstacksizeentry) update(highwater uint8) {
+	const modfreq = 1 << 5
+	cursize := e.stacksize()
+	curfreq := e.frequency()
+	if highwater < cursize {
+		if curfreq > 0 {
+			curfreq--
+		} else if cursize > 11 {
+			cursize--
+		}
+	} else if highwater > cursize {
+		if curfreq < modfreq-1 {
+			curfreq++
+		} else if cursize < 11+8-1 {
+			cursize++
+		}
+	}
+	cursize -= 11
+	if cursize >= 8 || curfreq >= modfreq {
+		throw("bad cursize/curfreq")
+	}
+	*e = gstacksizeentry((cursize << 5) + uint8(curfreq))
 }
 
 // Breakpoint executes a breakpoint trap.
@@ -4886,6 +5002,8 @@ func (pp *p) init(id int32) {
 	// Similarly, we may not go through pidleget before this P starts
 	// running if it is P 0 on startup.
 	idlepMask.clear(id)
+
+	pp.gstacksize.initseed()
 }
 
 // destroy releases all of the resources associated with pp and

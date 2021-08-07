@@ -1088,9 +1088,21 @@ func newstack() {
 		throw("stack overflow")
 	}
 
+	gp.highwater = ceillog2(newsize)
+
 	// The goroutine must be executing in order to call newstack,
 	// so it must be Grunning (or Gscanrunning).
 	casgstatus(gp, _Grunning, _Gcopystack)
+
+	if gp.realstacklo != 0 {
+		gp.stack.lo = gp.realstacklo
+		gp.stackguard0 = gp.stack.lo + _StackGuard
+		gp.realstacklo = 0
+		if newsize <= gp.stack.hi-gp.stack.lo {
+			casgstatus(gp, _Gcopystack, _Grunning)
+			gogo(&gp.sched)
+		}
+	}
 
 	// The concurrent GC will not scan the stack while we are doing the copy since
 	// the gp is in a Gcopystack status.
@@ -1392,4 +1404,14 @@ func (r *stackObjectRecord) ptrdata() uintptr {
 //go:linkname morestackc
 func morestackc() {
 	throw("attempt to execute system stack code on user stack")
+}
+
+// returns ceil(log2(n))
+func ceillog2(n uintptr) (x uint8) {
+	// TODO: avoid the loop
+	for n > 1 {
+		x++
+		n >>= 1
+	}
+	return
 }
