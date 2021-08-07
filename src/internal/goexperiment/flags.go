@@ -58,6 +58,7 @@ type Flags struct {
 	FieldTrack        bool
 	PreemptibleLoops  bool
 	StaticLockRanking bool
+	PredictStackSize  bool
 
 	// Regabi is split into several sub-experiments that can be
 	// enabled individually. Not all combinations work.
