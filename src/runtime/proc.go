@@ -3663,8 +3663,9 @@ func goexit0(gp *g) {
 
 	dropg()
 
-	gstacksizeupdate(_g_.gopc, _g_.highwater)
-	_g_.highwater = 0
+	// println("goexit0: gopc:", gp.gopc, "highwater:", gp.highwater)
+	gstacksizeupdate(gp.gopc, gp.highwater)
+	gp.highwater = 0
 
 	if GOARCH == "wasm" { // no threads yet on wasm
 		gfput(_g_.m.p.ptr(), gp)
@@ -4308,7 +4309,7 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	stackSize := gstacksizepredict(callerpc)
 	if stackSize != _StackMin {
 		// TODO: call gfget and immediately replace the default stack with one with the predicted size
-		print("newproc1: callerpc=", callerpc, " predicted stack size=", stackSize)
+		// println("newproc1: callerpc:", callerpc, "predicted stack size:", stackSize)
 	} else {
 		newg = gfget(_p_)
 	}
@@ -4550,7 +4551,8 @@ func gstacksizepredict(pc uintptr) int32 {
 	if !gstacksizeenabled {
 		return _StackMin
 	}
-	return _StackMin << gstacksizeinit().entryforPC(pc).stacksize()
+	size, _ := gstacksizeinit().entryforPC(pc).get()
+	return _StackMin << size
 }
 
 //go:nosplit
@@ -4577,6 +4579,9 @@ func gstacksizeinit() *gstacksize {
 
 type (
 	gstacksize struct {
+		// TODO: if we could enumerate all valid callerpcs and allocate a slot for each
+		// one of them, we could avoid all conflicts among entries and remove the per-GC
+		// resetting
 		entries [32]gstacksizeentry
 		seed    uintptr
 		cycle   uint32
@@ -4607,37 +4612,50 @@ func (s *gstacksize) entryforPC(pc uintptr) *gstacksizeentry {
 const freqBits = 5
 
 //go:nosplit
-func (e gstacksizeentry) stacksize() uint8 {
-	return uint8(e) >> freqBits
+func (e gstacksizeentry) get() (stacksize, frequency uint8) {
+	return uint8(e) >> freqBits, uint8(e) & ((1 << freqBits) - 1)
 }
 
 //go:nosplit
-func (e gstacksizeentry) frequency() int {
-	return int(e) & ((1 << freqBits) - 1)
+func (e *gstacksizeentry) set(stacksize, frequency uint8) {
+	const (
+		maxFreq = 1<<freqBits - 1
+		maxSize = 1<<(8-freqBits) - 1
+	)
+	if stacksize > maxSize || frequency > maxFreq {
+		print("gstacksizeentry.set: stacksize=", stacksize, " frequency=", frequency)
+		throw("invalid stacksize/frequency")
+	}
+	*e = gstacksizeentry((stacksize << freqBits) | frequency)
 }
 
 //go:nosplit
 func (e *gstacksizeentry) update(highwater uint8) {
-	const modfreq = 1 << freqBits
-	cursize := e.stacksize()
-	curfreq := e.frequency()
+	const (
+		maxFreq    = 1<<freqBits - 1
+		maxSize    = 1<<(8-freqBits) - 1
+		updateFreq = 10 // update probability = 1 over updateFreq
+	)
+	cursize, curfreq := e.get()
+	if highwater == cursize || fastrandn(updateFreq) != 0 {
+		return
+	}
 	if highwater < cursize {
 		if curfreq > 0 {
 			curfreq--
-		} else if cursize > 11 {
+		} else if cursize > 0 {
 			cursize--
+			curfreq = maxFreq / 2
 		}
-	} else if highwater > cursize {
-		if curfreq < modfreq-1 {
+	} else /* if highwater > cursize */ {
+		if curfreq < maxFreq {
 			curfreq++
-		} else if cursize < 8-1 {
+		} else if cursize < maxSize {
 			cursize++
+			curfreq = maxFreq / 2
 		}
 	}
-	if cursize >= 8 || curfreq >= modfreq {
-		throw("bad cursize/curfreq")
-	}
-	*e = gstacksizeentry((cursize << freqBits) + uint8(curfreq))
+	e.set(cursize, curfreq)
 }
 
 // Breakpoint executes a breakpoint trap.

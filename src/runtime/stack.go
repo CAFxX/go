@@ -1396,10 +1396,10 @@ func morestackc() {
 	throw("attempt to execute system stack code on user stack")
 }
 
-// returns ceil(log2(n))
+// returns ceil(log2(n/_StackMin))
 func ceillog2(n uintptr) (x uint8) {
 	// TODO: avoid the loop
-	for n > 1 {
+	for n > _StackMin {
 		x++
 		n >>= 1
 	}
