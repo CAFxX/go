@@ -3663,11 +3663,6 @@ func goexit0(gp *g) {
 
 	dropg()
 
-	if gp.realstacklo != 0 {
-		gp.stack.lo = gp.realstacklo
-		gp.stackguard0 = gp.stack.lo + _StackGuard
-		gp.realstacklo = 0
-	}
 	gstacksizeupdate(_g_.gopc, _g_.highwater)
 	_g_.highwater = 0
 
@@ -4308,21 +4303,17 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	}
 
 	_p_ := _g_.m.p.ptr()
-	stackSize := gstacksizepredict(callerpc)
+
 	var newg *g
+	stackSize := gstacksizepredict(callerpc)
 	if stackSize != _StackMin {
-		print("predicted stack size=", stackSize, " for pc=", callerpc)
+		// TODO: call gfget and immediately replace the default stack with one with the predicted size
+		print("newproc1: callerpc=", callerpc, " predicted stack size=", stackSize)
 	} else {
 		newg = gfget(_p_)
 	}
 	if newg == nil {
 		newg = malg(stackSize)
-		if gstacksizeenabled {
-			newg.realstacklo = newg.stack.lo
-			newg.stack.lo += (newg.stack.hi - newg.stack.lo) / 2
-			newg.stackguard0 = newg.stack.lo + _StackGuard
-			*(*uintptr)(unsafe.Pointer(newg.stack.lo)) = 0
-		}
 		casgstatus(newg, _Gidle, _Gdead)
 		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
 	}
@@ -4559,7 +4550,7 @@ func gstacksizepredict(pc uintptr) int32 {
 	if !gstacksizeenabled {
 		return _StackMin
 	}
-	return int32(1) << gstacksizeinit().entryforPC(pc).stacksize()
+	return _StackMin << gstacksizeinit().entryforPC(pc).stacksize()
 }
 
 //go:nosplit
@@ -4613,19 +4604,21 @@ func (s *gstacksize) entryforPC(pc uintptr) *gstacksizeentry {
 	return &s.entries[pch%uintptr(len(s.entries))]
 }
 
+const freqBits = 5
+
 //go:nosplit
 func (e gstacksizeentry) stacksize() uint8 {
-	return (uint8(e) >> 5) + 11
+	return uint8(e) >> freqBits
 }
 
 //go:nosplit
 func (e gstacksizeentry) frequency() int {
-	return int(e) & ((1 << 5) - 1)
+	return int(e) & ((1 << freqBits) - 1)
 }
 
 //go:nosplit
 func (e *gstacksizeentry) update(highwater uint8) {
-	const modfreq = 1 << 5
+	const modfreq = 1 << freqBits
 	cursize := e.stacksize()
 	curfreq := e.frequency()
 	if highwater < cursize {
@@ -4637,15 +4630,14 @@ func (e *gstacksizeentry) update(highwater uint8) {
 	} else if highwater > cursize {
 		if curfreq < modfreq-1 {
 			curfreq++
-		} else if cursize < 11+8-1 {
+		} else if cursize < 8-1 {
 			cursize++
 		}
 	}
-	cursize -= 11
 	if cursize >= 8 || curfreq >= modfreq {
 		throw("bad cursize/curfreq")
 	}
-	*e = gstacksizeentry((cursize << 5) + uint8(curfreq))
+	*e = gstacksizeentry((cursize << freqBits) + uint8(curfreq))
 }
 
 // Breakpoint executes a breakpoint trap.

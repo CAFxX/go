@@ -491,18 +491,6 @@ type g struct {
 	timer          *timer         // cached timer for time.Sleep
 	selectDone     uint32         // are we participating in a select and did someone win the race?
 
-	// realstacklo is non-0 and set to the real lower bound of the currently allocated
-	// stack before the first call to morestack. When a goroutine starts a stack is allocated
-	// but the stack boundaries are set as if the stack was only half of the allocated size,
-	// and realstacklo is set to the actual lower stack boundary. The first time morestack
-	// runs it notices that realstacklo is non-0, and instead of allocating a new stack
-	// and copying the contents of the old one, it just adjusts the stack boundaries to
-	// match the real stack size.
-	// This allows the dynamic stack sizing logic to detect if we are overallocating the
-	// initial goroutine stack: if realstacklo is non-0 when the G terminates then the
-	// allocated stack was too big.
-	realstacklo uintptr
-
 	// Per-G GC state
 
 	// gcAssistBytes is this G's GC assist credit in terms of

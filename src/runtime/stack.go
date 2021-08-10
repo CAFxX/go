@@ -1094,16 +1094,6 @@ func newstack() {
 	// so it must be Grunning (or Gscanrunning).
 	casgstatus(gp, _Grunning, _Gcopystack)
 
-	if gp.realstacklo != 0 {
-		gp.stack.lo = gp.realstacklo
-		gp.stackguard0 = gp.stack.lo + _StackGuard
-		gp.realstacklo = 0
-		if newsize <= gp.stack.hi-gp.stack.lo {
-			casgstatus(gp, _Gcopystack, _Grunning)
-			gogo(&gp.sched)
-		}
-	}
-
 	// The concurrent GC will not scan the stack while we are doing the copy since
 	// the gp is in a Gcopystack status.
 	copystack(gp, newsize)
