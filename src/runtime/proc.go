@@ -4309,7 +4309,7 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	stackSize := gstacksizepredict(callerpc)
 	if stackSize != _StackMin {
 		// TODO: call gfget and immediately replace the default stack with one with the predicted size
-		println("newproc1: callerpc:", callerpc, "predicted stack size:", stackSize)
+		//println("newproc1: callerpc:", callerpc, "predicted stack size:", stackSize)
 	} else {
 		newg = gfget(_p_)
 	}
@@ -4544,11 +4544,11 @@ func gfpurge(_p_ *p) {
 	unlock(&sched.gFree.lock)
 }
 
-var gstacksizeenabled = true
+var gstacksizeenabled = ""
 
 //go:nosplit
 func gstacksizepredict(pc uintptr) int32 {
-	if !gstacksizeenabled {
+	if len(gstacksizeenabled) == 0 {
 		return _StackMin
 	}
 	size, _ := gstacksizeinit().entryforPC(pc).get()
@@ -4557,7 +4557,7 @@ func gstacksizepredict(pc uintptr) int32 {
 
 //go:nosplit
 func gstacksizeupdate(pc uintptr, highwater uint8) {
-	if !gstacksizeenabled {
+	if len(gstacksizeenabled) == 0 {
 		return
 	}
 	gstacksizeinit().entryforPC(pc).update(highwater)
@@ -4609,7 +4609,7 @@ func (s *gstacksize) entryforPC(pc uintptr) *gstacksizeentry {
 	return &s.entries[pch%uintptr(len(s.entries))]
 }
 
-const freqBits = 5
+const freqBits = 4
 
 //go:nosplit
 func (e gstacksizeentry) get() (stacksize, frequency uint8) {
