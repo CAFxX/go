@@ -4309,7 +4309,7 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	stackSize := gstacksizepredict(callerpc)
 	if stackSize != _StackMin {
 		// TODO: call gfget and immediately replace the default stack with one with the predicted size
-		// println("newproc1: callerpc:", callerpc, "predicted stack size:", stackSize)
+		println("newproc1: callerpc:", callerpc, "predicted stack size:", stackSize)
 	} else {
 		newg = gfget(_p_)
 	}
