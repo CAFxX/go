@@ -4236,6 +4236,26 @@ func malg(stacksize int32) *g {
 	return newg
 }
 
+// Replaces the stack of newg with a new stack of the specified size.
+// Contrary to malg, the stacksize should already include _StackSystem
+// and be rounded up to a power of 2.
+func realg(newg *g, stacksize int32) *g {
+	systemstack(func() {
+		if newg.stack.hi-newg.stack.lo > 0 {
+			stackfree(newg.stack)
+			newg.stack.lo = 0
+			newg.stack.hi = 0
+		}
+		newg.stack = stackalloc(uint32(stacksize))
+		newg.stackguard0 = newg.stack.lo + _StackGuard
+		newg.stackguard1 = ^uintptr(0)
+	})
+	// Clear the bottom word of the stack. We record g
+	// there on gsignal stack during VDSO on ARM and ARM64.
+	*(*uintptr)(unsafe.Pointer(newg.stack.lo)) = 0
+	return newg
+}
+
 // Create a new g running fn with siz bytes of arguments.
 // Put it on the queue of g's waiting to run.
 // The compiler turns a go statement into a call to this.
@@ -4305,18 +4325,18 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 
 	_p_ := _g_.m.p.ptr()
 
-	var newg *g
 	stackSize := gstacksizepredict(callerpc)
-	if stackSize != _StackMin {
-		// TODO: call gfget and immediately replace the default stack with one with the predicted size
-		//println("newproc1: callerpc:", callerpc, "predicted stack size:", stackSize)
-	} else {
-		newg = gfget(_p_)
-	}
+	stackSize2 := round2(_StackSystem + stackSize)
+	//if stackSize != _FixedStack {
+	//println("newproc1: callerpc:", callerpc, "predicted stack size:", stackSize)
+	//}
+	newg := gfget(_p_)
 	if newg == nil {
 		newg = malg(stackSize)
 		casgstatus(newg, _Gidle, _Gdead)
 		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
+	} else if newg.stack.hi-newg.stack.lo < uintptr(stackSize2) {
+		realg(newg, stackSize2)
 	}
 	if newg.stack.hi == 0 {
 		throw("newproc1: newg missing stack")
