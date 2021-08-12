@@ -4315,6 +4315,20 @@ func newproc1(fn *funcval, argp unsafe.Pointer, narg int32, callergp *g, callerp
 	}
 	if newg == nil {
 		newg = malg(stackSize)
+		if sz := newg.stack.hi - newg.stack.lo; sz > _FixedStack {
+			// If stack size prediction is enabled and predicts a larger stack than the minimum one,
+			// we set the stackguard as if the stack was only half the size: we do this to detect
+			// goroutines that never grow their stacks, as this means that the prediction was too big.
+			// In this case the highwater will be 0 because newstack is never called, and gstacksizeupdate
+			// will consider the prediction as "too big".
+			// In newstack we handle this case by simply setting the stackguard to its correct value
+			// and resuming execution.
+			// Note that preemption or other events that mangle stackguard0 will overwrite this special
+			// value: this is acceptable, as in this case the only effect will be that highwater will
+			// be 0 even if newstack was called. As long as this happen rarely it should not affect the
+			// estimation significantly.
+			newg.stackguard0 = newg.stack.lo + sz/2 + _StackGuard
+		}
 		casgstatus(newg, _Gidle, _Gdead)
 		allgadd(newg) // publishes with a g->status of Gdead so GC scanner doesn't look at uninitialized stack.
 	}

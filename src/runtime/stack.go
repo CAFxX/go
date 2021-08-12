@@ -1076,6 +1076,7 @@ func newstack() {
 		// Don't double the stack (or we may quickly run out
 		// if this is done repeatedly).
 		newsize = oldsize
+		gp.stackguard0 = gp.stack.lo + _StackGuard
 	}
 
 	if newsize > maxstacksize || newsize > maxstackceiling {
@@ -1089,6 +1090,19 @@ func newstack() {
 	}
 
 	gp.highwater = ceillog2(newsize)
+
+	if gp.stackguard0 != gp.stack.lo+_StackGuard {
+		// This happens when stack size prediction is enabled and the stack grows
+		// for the first time. When the G is created with a custom stack size we set
+		// the stackguard as if the stack was only half the size that was allocated:
+		// we do this to detect goroutines that never grow their stacks, as this means
+		// that the prediction was too big.
+		// In this case here we just adjust the stackguard and resume.
+		// TODO: Check that we have enough space on the stack to avoid a second call
+		// to newstack.
+		gp.stackguard0 = gp.stack.lo + _StackGuard
+		gogo(&gp.sched)
+	}
 
 	// The goroutine must be executing in order to call newstack,
 	// so it must be Grunning (or Gscanrunning).
