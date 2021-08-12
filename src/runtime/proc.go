@@ -4544,11 +4544,9 @@ func gfpurge(_p_ *p) {
 	unlock(&sched.gFree.lock)
 }
 
-var gstacksizeenabled = ""
-
 //go:nosplit
 func gstacksizepredict(pc uintptr) int32 {
-	if len(gstacksizeenabled) == 0 {
+	if !goexperiment.PredictStackSize {
 		return _StackMin
 	}
 	size, _ := gstacksizeinit().entryforPC(pc).get()
@@ -4561,7 +4559,7 @@ func gstacksizepredict(pc uintptr) int32 {
 
 //go:nosplit
 func gstacksizeupdate(pc uintptr, highwater uint8) {
-	if len(gstacksizeenabled) == 0 {
+	if !goexperiment.PredictStackSize {
 		return
 	}
 	gstacksizeinit().entryforPC(pc).update(highwater)
