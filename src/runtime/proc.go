@@ -4552,7 +4552,11 @@ func gstacksizepredict(pc uintptr) int32 {
 		return _StackMin
 	}
 	size, _ := gstacksizeinit().entryforPC(pc).get()
-	return _StackMin << size
+	stack := int32(_StackMin) << size
+	if stack >= _FixedStack {
+		stack /= _FixedStack / _StackMin
+	}
+	return stack
 }
 
 //go:nosplit
@@ -4565,7 +4569,10 @@ func gstacksizeupdate(pc uintptr, highwater uint8) {
 
 //go:nosplit
 func gstacksizeinit() *gstacksize {
-	cycle := atomic.Load(&work.cycles) // TODO: can we move invalidation to the GC stop-the-world?
+	// TODO: can we move invalidation to the GC stop-the-world?
+	// TODO: should we use random invalidation instead?
+	// TODO: can we remove invalidation alltogether?
+	cycle := atomic.Load(&work.cycles)
 	_p_ := getg().m.p.ptr()
 	if cycle != _p_.gstacksize.cycle {
 		_p_.gstacksize.cycle = cycle
