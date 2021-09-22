@@ -29,6 +29,8 @@ func (f *File) Close() error {
 // read reads up to len(b) bytes from the File.
 // It returns the number of bytes read and an error, if any.
 func (f *File) read(b []byte) (n int, err error) {
+	runtime_decommitRange(b)
+	runtime_decommitUnusedStack()
 	n, err = f.pfd.Read(b)
 	runtime.KeepAlive(f)
 	return n, err
@@ -38,6 +40,8 @@ func (f *File) read(b []byte) (n int, err error) {
 // It returns the number of bytes read and the error, if any.
 // EOF is signaled by a zero count with err set to nil.
 func (f *File) pread(b []byte, off int64) (n int, err error) {
+	runtime_decommitRange(b)
+	runtime_decommitUnusedStack()
 	n, err = f.pfd.Pread(b, off)
 	runtime.KeepAlive(f)
 	return n, err
@@ -46,6 +50,7 @@ func (f *File) pread(b []byte, off int64) (n int, err error) {
 // write writes len(b) bytes to the File.
 // It returns the number of bytes written and an error, if any.
 func (f *File) write(b []byte) (n int, err error) {
+	runtime_decommitUnusedStack()
 	n, err = f.pfd.Write(b)
 	runtime.KeepAlive(f)
 	return n, err
@@ -54,6 +59,7 @@ func (f *File) write(b []byte) (n int, err error) {
 // pwrite writes len(b) bytes to the File starting at byte offset off.
 // It returns the number of bytes written and an error, if any.
 func (f *File) pwrite(b []byte, off int64) (n int, err error) {
+	runtime_decommitUnusedStack()
 	n, err = f.pfd.Pwrite(b, off)
 	runtime.KeepAlive(f)
 	return n, err
@@ -249,3 +255,7 @@ func ignoringEINTR(fn func() error) error {
 		}
 	}
 }
+
+// defined in runtime
+func runtime_decommitRange([]byte)
+func runtime_decommitUnusedStack()

@@ -53,59 +53,74 @@ func (fd *netFD) closeWrite() error {
 }
 
 func (fd *netFD) Read(p []byte) (n int, err error) {
+	runtime_decommitRange(p)
+	runtime_decommitUnusedStack()
 	n, err = fd.pfd.Read(p)
 	runtime.KeepAlive(fd)
 	return n, wrapSyscallError(readSyscallName, err)
 }
 
 func (fd *netFD) readFrom(p []byte) (n int, sa syscall.Sockaddr, err error) {
+	runtime_decommitRange(p)
+	runtime_decommitUnusedStack()
 	n, sa, err = fd.pfd.ReadFrom(p)
 	runtime.KeepAlive(fd)
 	return n, sa, wrapSyscallError(readFromSyscallName, err)
 }
 func (fd *netFD) readFromInet4(p []byte, from *syscall.SockaddrInet4) (n int, err error) {
+	runtime_decommitRange(p)
+	runtime_decommitUnusedStack()
 	n, err = fd.pfd.ReadFromInet4(p, from)
 	runtime.KeepAlive(fd)
 	return n, wrapSyscallError(readFromSyscallName, err)
 }
 
 func (fd *netFD) readFromInet6(p []byte, from *syscall.SockaddrInet6) (n int, err error) {
+	runtime_decommitRange(p)
+	runtime_decommitUnusedStack()
 	n, err = fd.pfd.ReadFromInet6(p, from)
 	runtime.KeepAlive(fd)
 	return n, wrapSyscallError(readFromSyscallName, err)
 }
 
 func (fd *netFD) readMsg(p []byte, oob []byte, flags int) (n, oobn, retflags int, sa syscall.Sockaddr, err error) {
+	runtime_decommitRange(p)
+	runtime_decommitUnusedStack()
 	n, oobn, retflags, sa, err = fd.pfd.ReadMsg(p, oob, flags)
 	runtime.KeepAlive(fd)
 	return n, oobn, retflags, sa, wrapSyscallError(readMsgSyscallName, err)
 }
 
 func (fd *netFD) Write(p []byte) (nn int, err error) {
+	runtime_decommitUnusedStack()
 	nn, err = fd.pfd.Write(p)
 	runtime.KeepAlive(fd)
 	return nn, wrapSyscallError(writeSyscallName, err)
 }
 
 func (fd *netFD) writeTo(p []byte, sa syscall.Sockaddr) (n int, err error) {
+	runtime_decommitUnusedStack()
 	n, err = fd.pfd.WriteTo(p, sa)
 	runtime.KeepAlive(fd)
 	return n, wrapSyscallError(writeToSyscallName, err)
 }
 
 func (fd *netFD) writeToInet4(p []byte, sa syscall.SockaddrInet4) (n int, err error) {
+	runtime_decommitUnusedStack()
 	n, err = fd.pfd.WriteToInet4(p, sa)
 	runtime.KeepAlive(fd)
 	return n, wrapSyscallError(writeToSyscallName, err)
 }
 
 func (fd *netFD) writeToInet6(p []byte, sa syscall.SockaddrInet6) (n int, err error) {
+	runtime_decommitUnusedStack()
 	n, err = fd.pfd.WriteToInet6(p, sa)
 	runtime.KeepAlive(fd)
 	return n, wrapSyscallError(writeToSyscallName, err)
 }
 
 func (fd *netFD) writeMsg(p []byte, oob []byte, sa syscall.Sockaddr) (n int, oobn int, err error) {
+	runtime_decommitUnusedStack()
 	n, oobn, err = fd.pfd.WriteMsg(p, oob, sa)
 	runtime.KeepAlive(fd)
 	return n, oobn, wrapSyscallError(writeMsgSyscallName, err)
@@ -122,3 +137,7 @@ func (fd *netFD) SetReadDeadline(t time.Time) error {
 func (fd *netFD) SetWriteDeadline(t time.Time) error {
 	return fd.pfd.SetWriteDeadline(t)
 }
+
+// defined in runtime
+func runtime_decommitRange([]byte)
+func runtime_decommitUnusedStack()
