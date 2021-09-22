@@ -3,7 +3,15 @@
 
 package runtime
 
-import "unsafe"
+import (
+	"runtime/internal/atomic"
+	"unsafe"
+)
+
+func decommitEnabled() bool {
+	const decommitInflightIOThreshold = 250
+	return atomic.Load(&netpollWaiters) > decommitInflightIOThreshold
+}
 
 //go:linkname decommitRangeNet net.runtime_decommitRange
 func decommitRangeNet(p []byte) { decommitRange(p) }
@@ -18,7 +26,7 @@ func decommitUnusedStackNet() { decommitUnusedStack() }
 func decommitUnusedStackOs() { decommitUnusedStack() }
 
 func decommitRange(p []byte) {
-	if len(p) == 0 {
+	if !decommitEnabled() || len(p) == 0 {
 		return
 	}
 	ptr := uintptr(unsafe.Pointer(&p[0]))
@@ -26,6 +34,9 @@ func decommitRange(p []byte) {
 }
 
 func decommitUnusedStack() {
+	if !decommitEnabled() {
+		return
+	}
 	procPin()
 	gp := getg()
 	// decommit is nosplit, so it can use at most _StackLimit bytes,

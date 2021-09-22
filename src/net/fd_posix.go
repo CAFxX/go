@@ -10,7 +10,6 @@ package net
 import (
 	"internal/poll"
 	"runtime"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -55,11 +54,8 @@ func (fd *netFD) closeWrite() error {
 
 func (fd *netFD) Read(p []byte) (n int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitRange(p)
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitRange(p)
+		runtime_decommitUnusedStack()
 	}
 	n, err = fd.pfd.Read(p)
 	runtime.KeepAlive(fd)
@@ -68,11 +64,8 @@ func (fd *netFD) Read(p []byte) (n int, err error) {
 
 func (fd *netFD) readFrom(p []byte) (n int, sa syscall.Sockaddr, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitRange(p)
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitRange(p)
+		runtime_decommitUnusedStack()
 	}
 	n, sa, err = fd.pfd.ReadFrom(p)
 	runtime.KeepAlive(fd)
@@ -80,11 +73,8 @@ func (fd *netFD) readFrom(p []byte) (n int, sa syscall.Sockaddr, err error) {
 }
 func (fd *netFD) readFromInet4(p []byte, from *syscall.SockaddrInet4) (n int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitRange(p)
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitRange(p)
+		runtime_decommitUnusedStack()
 	}
 	n, err = fd.pfd.ReadFromInet4(p, from)
 	runtime.KeepAlive(fd)
@@ -93,11 +83,8 @@ func (fd *netFD) readFromInet4(p []byte, from *syscall.SockaddrInet4) (n int, er
 
 func (fd *netFD) readFromInet6(p []byte, from *syscall.SockaddrInet6) (n int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitRange(p)
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitRange(p)
+		runtime_decommitUnusedStack()
 	}
 	n, err = fd.pfd.ReadFromInet6(p, from)
 	runtime.KeepAlive(fd)
@@ -106,11 +93,8 @@ func (fd *netFD) readFromInet6(p []byte, from *syscall.SockaddrInet6) (n int, er
 
 func (fd *netFD) readMsg(p []byte, oob []byte, flags int) (n, oobn, retflags int, sa syscall.Sockaddr, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitRange(p)
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitRange(p)
+		runtime_decommitUnusedStack()
 	}
 	n, oobn, retflags, sa, err = fd.pfd.ReadMsg(p, oob, flags)
 	runtime.KeepAlive(fd)
@@ -119,10 +103,7 @@ func (fd *netFD) readMsg(p []byte, oob []byte, flags int) (n, oobn, retflags int
 
 func (fd *netFD) Write(p []byte) (nn int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitUnusedStack()
 	}
 	nn, err = fd.pfd.Write(p)
 	runtime.KeepAlive(fd)
@@ -131,10 +112,7 @@ func (fd *netFD) Write(p []byte) (nn int, err error) {
 
 func (fd *netFD) writeTo(p []byte, sa syscall.Sockaddr) (n int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitUnusedStack()
 	}
 	n, err = fd.pfd.WriteTo(p, sa)
 	runtime.KeepAlive(fd)
@@ -143,10 +121,7 @@ func (fd *netFD) writeTo(p []byte, sa syscall.Sockaddr) (n int, err error) {
 
 func (fd *netFD) writeToInet4(p []byte, sa syscall.SockaddrInet4) (n int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitUnusedStack()
 	}
 	n, err = fd.pfd.WriteToInet4(p, sa)
 	runtime.KeepAlive(fd)
@@ -155,10 +130,7 @@ func (fd *netFD) writeToInet4(p []byte, sa syscall.SockaddrInet4) (n int, err er
 
 func (fd *netFD) writeToInet6(p []byte, sa syscall.SockaddrInet6) (n int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitUnusedStack()
 	}
 	n, err = fd.pfd.WriteToInet6(p, sa)
 	runtime.KeepAlive(fd)
@@ -167,10 +139,7 @@ func (fd *netFD) writeToInet6(p []byte, sa syscall.SockaddrInet6) (n int, err er
 
 func (fd *netFD) writeMsg(p []byte, oob []byte, sa syscall.Sockaddr) (n int, oobn int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitUnusedStack()
 	}
 	n, oobn, err = fd.pfd.WriteMsg(p, oob, sa)
 	runtime.KeepAlive(fd)
@@ -193,10 +162,7 @@ func (fd *netFD) SetWriteDeadline(t time.Time) error {
 func runtime_decommitRange([]byte)
 func runtime_decommitUnusedStack()
 
-var inflight int32
-
 const (
-	inflightThreshold = 250
-	useDecommit       = runtime.GOOS == "aix" || runtime.GOOS == "darwin" || runtime.GOOS == "linux" ||
+	useDecommit = runtime.GOOS == "aix" || runtime.GOOS == "darwin" || runtime.GOOS == "linux" ||
 		runtime.GOOS == "openbsd" || runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd"
 )

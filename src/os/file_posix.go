@@ -9,7 +9,6 @@ package os
 
 import (
 	"runtime"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -31,11 +30,8 @@ func (f *File) Close() error {
 // It returns the number of bytes read and an error, if any.
 func (f *File) read(b []byte) (n int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitRange(b)
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitRange(b)
+		runtime_decommitUnusedStack()
 	}
 	n, err = f.pfd.Read(b)
 	runtime.KeepAlive(f)
@@ -47,11 +43,8 @@ func (f *File) read(b []byte) (n int, err error) {
 // EOF is signaled by a zero count with err set to nil.
 func (f *File) pread(b []byte, off int64) (n int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitRange(b)
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitRange(b)
+		runtime_decommitUnusedStack()
 	}
 	n, err = f.pfd.Pread(b, off)
 	runtime.KeepAlive(f)
@@ -62,10 +55,7 @@ func (f *File) pread(b []byte, off int64) (n int, err error) {
 // It returns the number of bytes written and an error, if any.
 func (f *File) write(b []byte) (n int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitUnusedStack()
 	}
 	n, err = f.pfd.Write(b)
 	runtime.KeepAlive(f)
@@ -76,10 +66,7 @@ func (f *File) write(b []byte) (n int, err error) {
 // It returns the number of bytes written and an error, if any.
 func (f *File) pwrite(b []byte, off int64) (n int, err error) {
 	if useDecommit {
-		if atomic.AddInt32(&inflight, 1) > inflightThreshold {
-			runtime_decommitUnusedStack()
-		}
-		defer atomic.AddInt32(&inflight, -1)
+		runtime_decommitUnusedStack()
 	}
 	n, err = f.pfd.Pwrite(b, off)
 	runtime.KeepAlive(f)
@@ -281,10 +268,7 @@ func ignoringEINTR(fn func() error) error {
 func runtime_decommitRange([]byte)
 func runtime_decommitUnusedStack()
 
-var inflight int32
-
 const (
-	inflightThreshold = 250
-	useDecommit       = runtime.GOOS == "aix" || runtime.GOOS == "darwin" || runtime.GOOS == "linux" ||
+	useDecommit = runtime.GOOS == "aix" || runtime.GOOS == "darwin" || runtime.GOOS == "linux" ||
 		runtime.GOOS == "openbsd" || runtime.GOOS == "freebsd" || runtime.GOOS == "netbsd"
 )
