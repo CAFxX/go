@@ -4763,6 +4763,10 @@ func (pp *p) init(id int32) {
 			pp.mcache = allocmcache()
 		}
 	}
+	if pp.internTable == nil {
+		pp.internTable = new(internTable)
+		pp.internTable.seed = fastrand()
+	}
 	if raceenabled && pp.raceprocctx == 0 {
 		if id == 0 {
 			pp.raceprocctx = raceprocctx0
@@ -4816,6 +4820,9 @@ func (pp *p) destroy() {
 		atomic.Store64(&pp.timer0When, 0)
 		unlock(&pp.timersLock)
 		unlock(&plocal.timersLock)
+	}
+	for i := range pp.internTable.table {
+		pp.internTable.table[i] = internEntry{}
 	}
 	// Flush p's write barrier buffer.
 	if gcphase != _GCoff {
