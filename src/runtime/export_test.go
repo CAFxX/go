@@ -1230,3 +1230,7 @@ func GCTestPointerClass(p unsafe.Pointer) string {
 }
 
 const Raceenabled = raceenabled
+
+func StringAddr(s string) unsafe.Pointer {
+	return stringStructOf(&s).str
+}

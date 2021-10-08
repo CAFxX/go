@@ -7,13 +7,12 @@ import (
 
 type internEntry struct {
 	s string
-	n int
 }
 
 type internTable struct {
+	table [1024]internEntry
 	lock  uint32
 	seed  uint32
-	table [1024]internEntry
 }
 
 func (t *internTable) tryLock() bool {
@@ -35,21 +34,19 @@ func Intern(s string) string {
 	if !t.tryLock() {
 		return s
 	}
-	defer func() { t.unlock() }()
 
-	if fastrandn(100) == 0 {
+	if fastrand()%128 == 0 {
 		incrementalSync(t)
 	}
 
 	h := intern_strhash(s, uintptr(t.seed))
 	i := h % uintptr(len(t.table))
 	if is := t.table[i].s; s == is {
-		return is
-	} else if is == "" || fastrandn(100) == 0 {
-		is = s
-		t.table[i].s = is
-		return is
+		s = is
+	} else if is == "" || fastrand()%128 == 0 {
+		t.table[i].s = s
 	}
+	t.unlock()
 	return s
 }
 
@@ -62,22 +59,24 @@ func InternBytes(b []byte) string {
 	if !t.tryLock() {
 		return string(b)
 	}
-	defer func() { t.unlock() }()
 
-	if fastrandn(100) == 0 {
+	if fastrand()%128 == 0 {
 		incrementalSync(t)
 	}
 
 	h := intern_slicehash(b, uintptr(t.seed))
 	i := h % uintptr(len(t.table))
+	var s string
 	if is := t.table[i].s; string(b) == is {
-		return is
-	} else if is == "" || fastrandn(100) == 0 {
-		is = string(b)
-		t.table[i].s = is
-		return is
+		s = is
+	} else if is == "" || fastrand()%128 == 0 {
+		s = string(b)
+		t.table[i].s = s
+	} else {
+		s = string(b)
 	}
-	return string(b)
+	t.unlock()
+	return s
 }
 
 func incrementalSync(t *internTable) {
@@ -91,7 +90,6 @@ func incrementalSync(t *internTable) {
 	if t == t2 || t2 == nil || !t2.tryLock() {
 		return
 	}
-	defer func() { t2.unlock() }()
 	h2 := intern_strhash(e.s, uintptr(t2.seed))
 	i2 := h2 % uintptr(len(t2.table))
 	if e2 := &t2.table[i2]; e.s == e2.s {
@@ -101,6 +99,7 @@ func incrementalSync(t *internTable) {
 			e2.s = e.s
 		}
 	}
+	t2.unlock()
 }
 
 func intern_strhash(s string, seed uintptr) uintptr {
