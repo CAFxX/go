@@ -148,6 +148,7 @@ func closeDB(t testing.TB, db *DB) {
 		fmt.Printf("Panic: %v\n", e)
 		panic(e)
 	}
+	db.autoPrepareFree()
 	defer setHookpostCloseConn(nil)
 	setHookpostCloseConn(func(_ *fakeConn, err error) {
 		if err != nil {

@@ -21,10 +21,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"reflect"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -477,11 +479,15 @@ type DB struct {
 	openerCh          chan struct{}
 	closed            bool
 	dep               map[finalCloser]depSet
-	lastPut           map[*driverConn]string // stacktrace of last conn's put; debug only
-	maxIdleCount      int                    // zero means defaultMaxIdleConns; negative means 0
-	maxOpen           int                    // <= 0 means unlimited
-	maxLifetime       time.Duration          // maximum amount of time a connection may be reused
-	maxIdleTime       time.Duration          // maximum amount of time a connection may be idle before being closed
+	lastPut           map[*driverConn]string   // stacktrace of last conn's put; debug only
+	autoPrep          map[string]*autoPrepStmt // automatically-prepared statements
+	rnd               *rand.Rand
+	maxPrepared       int           // maximum number of automaticall-prepared statements
+	maxTracked        int           // maximum number of candidate statements to track for automatically-prepared ones
+	maxIdleCount      int           // zero means defaultMaxIdleConns; negative means 0
+	maxOpen           int           // <= 0 means unlimited
+	maxLifetime       time.Duration // maximum amount of time a connection may be reused
+	maxIdleTime       time.Duration // maximum amount of time a connection may be idle before being closed
 	cleanerCh         chan struct{}
 	waitCount         int64 // Total number of connections waited for.
 	maxIdleClosed     int64 // Total number of connections closed due to idle count.
@@ -765,6 +771,102 @@ func (t dsnConnector) Driver() driver.Driver {
 	return t.driver
 }
 
+type autoPrepStmt struct {
+	*Stmt
+	query string
+	hits  int
+}
+
+func (db *DB) autoPrepare(ctx context.Context, query string) *Stmt {
+	var stmt *Stmt
+	startWorker := false
+	withLock(&db.mu, func() {
+		if db.maxPrepared == 0 {
+			return
+		}
+		s, found := db.autoPrep[query]
+		startWorker = db.rnd.Intn(100) == 0
+		if found {
+			stmt = s.Stmt
+			s.hits++
+		} else {
+			if startWorker {
+				db.autoPrep[query] = &autoPrepStmt{query: query, hits: 1}
+			}
+		}
+	})
+	if startWorker {
+		go db.autoPrepareWorker()
+	}
+	return stmt
+}
+
+func (db *DB) autoPrepareWorker() {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	stmts := make([]*autoPrepStmt, 0, len(db.autoPrep))
+	for _, s := range db.autoPrep {
+		stmts = append(stmts, s)
+	}
+	sort.Slice(stmts, func(i, j int) bool {
+		if stmts[i].hits != stmts[j].hits {
+			return stmts[i].hits > stmts[j].hits
+		} else if stmts[i].Stmt == nil && stmts[j].Stmt != nil {
+			return false
+		} else if stmts[i].Stmt != nil && stmts[j].Stmt == nil {
+			return true
+		}
+		return strings.Compare(stmts[i].query, stmts[j].query) < 0
+	})
+	for i, stmt := range stmts {
+		stmt.hits /= 2
+		if i < db.maxPrepared && stmt.Stmt == nil {
+			go func() {
+				s, _ := db.Prepare(stmt.query)
+				if s == nil {
+					return
+				}
+				withLock(&db.mu, func() {
+					if stmt.Stmt == nil {
+						stmt.Stmt = s
+						s = nil
+					}
+				})
+				if s != nil {
+					s.Close()
+				}
+			}()
+		} else if (i >= db.maxPrepared && stmt.Stmt != nil) || i >= db.maxTracked || stmt.hits == 0 {
+			if stmt.Stmt != nil {
+				go stmt.Stmt.Close()
+				stmt.Stmt = nil
+			}
+			if i >= db.maxTracked || stmt.hits == 0 {
+				delete(db.autoPrep, stmt.query)
+			}
+		}
+	}
+}
+
+func (db *DB) autoPrepareFree() {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	withLock(&db.mu, func() {
+		for q, s := range db.autoPrep {
+			if s.Stmt != nil {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					s.Stmt.Close()
+				}()
+			}
+			delete(db.autoPrep, q)
+		}
+	})
+}
+
 // OpenDB opens a database using a Connector, allowing drivers to
 // bypass a string based data source name.
 //
@@ -789,6 +891,10 @@ func OpenDB(c driver.Connector) *DB {
 		lastPut:      make(map[*driverConn]string),
 		connRequests: make(map[uint64]chan connRequest),
 		stop:         cancel,
+		autoPrep:     make(map[string]*autoPrepStmt),
+		rnd:          rand.New(rand.NewSource(rand.Int63())),
+		maxPrepared:  25,
+		maxTracked:   250,
 	}
 
 	go db.connectionOpener(ctx)
@@ -1127,6 +1233,21 @@ func (db *DB) connectionCleanerRunLocked() (closing []*driverConn) {
 		db.maxIdleTimeClosed += expiredCount
 	}
 	return
+}
+
+// SetAutoprepare enables automatic statement preparation for frequently-executed
+// queries.
+func (db *DB) SetAutoprepare(maxPrepared, maxTracked int) {
+	if maxPrepared <= 0 || maxTracked < maxPrepared {
+		maxPrepared, maxTracked = 0, 0
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.maxPrepared == maxPrepared && db.maxTracked == maxTracked {
+		return
+	}
+	db.maxPrepared, db.maxTracked = maxPrepared, maxTracked
+	go db.autoPrepareWorker()
 }
 
 // DBStats contains database statistics.
@@ -1595,6 +1716,10 @@ func (db *DB) prepareDC(ctx context.Context, dc *driverConn, release func(error)
 // ExecContext executes a query without returning any rows.
 // The args are for any placeholder parameters in the query.
 func (db *DB) ExecContext(ctx context.Context, query string, args ...interface{}) (Result, error) {
+	if stmt := db.autoPrepare(ctx, query); stmt != nil {
+		return stmt.ExecContext(ctx, args...)
+	}
+
 	var res Result
 	var err error
 	for i := 0; i < maxBadConnRetries; i++ {
@@ -1668,6 +1793,10 @@ func (db *DB) execDC(ctx context.Context, dc *driverConn, release func(error), q
 // QueryContext executes a query that returns rows, typically a SELECT.
 // The args are for any placeholder parameters in the query.
 func (db *DB) QueryContext(ctx context.Context, query string, args ...interface{}) (*Rows, error) {
+	if stmt := db.autoPrepare(ctx, query); stmt != nil {
+		return stmt.QueryContext(ctx, args...)
+	}
+
 	var rows *Rows
 	var err error
 	for i := 0; i < maxBadConnRetries; i++ {
@@ -2443,6 +2572,10 @@ func (tx *Tx) Stmt(stmt *Stmt) *Stmt {
 // ExecContext executes a query that doesn't return rows.
 // For example: an INSERT and UPDATE.
 func (tx *Tx) ExecContext(ctx context.Context, query string, args ...interface{}) (Result, error) {
+	if stmt := tx.db.autoPrepare(ctx, query); stmt != nil {
+		return tx.StmtContext(ctx, stmt).ExecContext(ctx, args...)
+	}
+
 	dc, release, err := tx.grabConn(ctx)
 	if err != nil {
 		return nil, err
@@ -2461,6 +2594,10 @@ func (tx *Tx) Exec(query string, args ...interface{}) (Result, error) {
 
 // QueryContext executes a query that returns rows, typically a SELECT.
 func (tx *Tx) QueryContext(ctx context.Context, query string, args ...interface{}) (*Rows, error) {
+	if stmt := tx.db.autoPrepare(ctx, query); stmt != nil {
+		return tx.StmtContext(ctx, stmt).QueryContext(ctx, args...)
+	}
+
 	dc, release, err := tx.grabConn(ctx)
 	if err != nil {
 		return nil, err
