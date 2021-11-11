@@ -7,7 +7,7 @@
 
 //go:build (darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || windows) && !appengine && !android
 
-package main
+package pprof
 
 import (
 	"fmt"

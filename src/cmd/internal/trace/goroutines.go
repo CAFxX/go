@@ -4,7 +4,7 @@
 
 // Goroutine-related profiles.
 
-package main
+package trace
 
 import (
 	"fmt"

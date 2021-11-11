@@ -23,7 +23,7 @@
 // could potentially put confidence intervals on these estimates and
 // render this progressively as we refine the distributions.
 
-package main
+package trace
 
 import (
 	"encoding/json"

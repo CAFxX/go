@@ -4,7 +4,7 @@
 
 //go:build !js
 
-package main
+package trace
 
 import (
 	"cmd/internal/traceviewer"
