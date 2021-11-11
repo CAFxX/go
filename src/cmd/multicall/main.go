@@ -5,6 +5,7 @@ import (
 	"cmd/internal/buildid"
 	"cmd/internal/cover"
 	"cmd/internal/doc"
+	"cmd/internal/nm"
 	"cmd/internal/objdump"
 	"cmd/internal/pprof"
 	"cmd/internal/test2json"
@@ -25,6 +26,8 @@ func main() {
 		cover.Main()
 	case "doc":
 		doc.Main()
+	case "nm":
+		nm.Main()
 	case "objdump":
 		objdump.Main()
 	case "pprof":
