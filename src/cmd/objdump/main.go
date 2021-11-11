@@ -32,74 +32,9 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	"log"
-	"os"
-	"regexp"
-	"strconv"
-	"strings"
-
-	"cmd/internal/objfile"
+	"cmd/internal/objdump"
 )
 
-var printCode = flag.Bool("S", false, "print Go code alongside assembly")
-var symregexp = flag.String("s", "", "only dump symbols matching this regexp")
-var gnuAsm = flag.Bool("gnu", false, "print GNU assembly next to Go assembly (where supported)")
-var symRE *regexp.Regexp
-
-func usage() {
-	fmt.Fprintf(os.Stderr, "usage: go tool objdump [-S] [-gnu] [-s symregexp] binary [start end]\n\n")
-	flag.PrintDefaults()
-	os.Exit(2)
-}
-
 func main() {
-	log.SetFlags(0)
-	log.SetPrefix("objdump: ")
-
-	flag.Usage = usage
-	flag.Parse()
-	if flag.NArg() != 1 && flag.NArg() != 3 {
-		usage()
-	}
-
-	if *symregexp != "" {
-		re, err := regexp.Compile(*symregexp)
-		if err != nil {
-			log.Fatalf("invalid -s regexp: %v", err)
-		}
-		symRE = re
-	}
-
-	f, err := objfile.Open(flag.Arg(0))
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-
-	dis, err := f.Disasm()
-	if err != nil {
-		log.Fatalf("disassemble %s: %v", flag.Arg(0), err)
-	}
-
-	switch flag.NArg() {
-	default:
-		usage()
-	case 1:
-		// disassembly of entire object
-		dis.Print(os.Stdout, symRE, 0, ^uint64(0), *printCode, *gnuAsm)
-
-	case 3:
-		// disassembly of PC range
-		start, err := strconv.ParseUint(strings.TrimPrefix(flag.Arg(1), "0x"), 16, 64)
-		if err != nil {
-			log.Fatalf("invalid start PC: %v", err)
-		}
-		end, err := strconv.ParseUint(strings.TrimPrefix(flag.Arg(2), "0x"), 16, 64)
-		if err != nil {
-			log.Fatalf("invalid end PC: %v", err)
-		}
-		dis.Print(os.Stdout, symRE, start, end, *printCode, *gnuAsm)
-	}
+	objdump.Main()
 }

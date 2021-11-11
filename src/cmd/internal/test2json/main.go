@@ -81,12 +81,66 @@
 // by a final event with Action == "bench" or "fail".
 // Benchmarks have no events with Action == "run", "pause", or "cont".
 //
-package main
+package test2json
 
 import (
-	"cmd/internal/test2json"
+	"flag"
+	"fmt"
+	exec "internal/execabs"
+	"io"
+	"os"
 )
 
-func main() {
-	test2json.Main()
+func usage() {
+	fmt.Fprintf(os.Stderr, "usage: go tool test2json [-p pkg] [-t] [./pkg.test -test.v]\n")
+	os.Exit(2)
+}
+
+func Main() {
+	var (
+		flagP = flag.String("p", "", "report `pkg` as the package being tested in each event")
+		flagT = flag.Bool("t", false, "include timestamps in events")
+	)
+	flag.Usage = usage
+	flag.Parse()
+
+	var mode Mode
+	if *flagT {
+		mode |= Timestamp
+	}
+	c := NewConverter(os.Stdout, *flagP, mode)
+	defer c.Close()
+
+	if flag.NArg() == 0 {
+		io.Copy(c, os.Stdin)
+	} else {
+		args := flag.Args()
+		cmd := exec.Command(args[0], args[1:]...)
+		w := &countWriter{0, c}
+		cmd.Stdout = w
+		cmd.Stderr = w
+		err := cmd.Run()
+		if err != nil {
+			if w.n > 0 {
+				// Assume command printed why it failed.
+			} else {
+				fmt.Fprintf(c, "test2json: %v\n", err)
+			}
+		}
+		c.Exited(err)
+		if err != nil {
+			c.Close()
+			os.Exit(1)
+		}
+	}
+}
+
+type countWriter struct {
+	n int64
+	w io.Writer
+}
+
+func (w *countWriter) Write(b []byte) (int, error) {
+	w.n += int64(len(b))
+	return w.w.Write(b)
 }

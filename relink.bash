@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+ln -sf multicall pkg/tool/linux_amd64/addr2line
+ln -sf multicall pkg/tool/linux_amd64/buildid
+ln -sf multicall pkg/tool/linux_amd64/cover
+ln -sf multicall pkg/tool/linux_amd64/doc
+ln -sf multicall pkg/tool/linux_amd64/objdump
+ln -sf multicall pkg/tool/linux_amd64/pprof
+ln -sf multicall pkg/tool/linux_amd64/test2json
+ln -sf multicall pkg/tool/linux_amd64/trace
+ln -sf multicall pkg/tool/linux_amd64/vet

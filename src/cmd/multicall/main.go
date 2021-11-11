@@ -5,8 +5,11 @@ import (
 	"cmd/internal/buildid"
 	"cmd/internal/cover"
 	"cmd/internal/doc"
+	"cmd/internal/objdump"
 	"cmd/internal/pprof"
+	"cmd/internal/test2json"
 	"cmd/internal/trace"
+	"cmd/internal/vet"
 	"os"
 	"path/filepath"
 )
@@ -22,10 +25,16 @@ func main() {
 		cover.Main()
 	case "doc":
 		doc.Main()
+	case "objdump":
+		objdump.Main()
 	case "pprof":
 		pprof.Main()
+	case "test2json":
+		test2json.Main()
 	case "trace":
 		trace.Main()
+	case "vet":
+		vet.Main()
 	default:
 		os.Stderr.WriteString("Golang multicall binary\n")
 		if cmd != "multicall" {
