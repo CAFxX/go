@@ -12,7 +12,8 @@ import (
 )
 
 func main() {
-	switch filepath.Base(os.Args[0]) {
+	cmd := filepath.Base(os.Args[0])
+	switch cmd {
 	case "addr2line":
 		addr2line.Main()
 	case "buildid":
@@ -25,10 +26,11 @@ func main() {
 		pprof.Main()
 	case "trace":
 		trace.Main()
-	case "multicall":
-		os.Stderr.WriteString("Golang multicall binary\n")
-		return
 	default:
-		panic(`unknown command "` + os.Args[0] + `"`)
+		os.Stderr.WriteString("Golang multicall binary\n")
+		if cmd != "multicall" {
+			os.Stderr.WriteString(`unknown command "` + os.Args[0] + `"` + "\n")
+			os.Exit(64) // EX_USAGE
+		}
 	}
 }
