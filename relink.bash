@@ -3,6 +3,7 @@ ln -sf multicall pkg/tool/linux_amd64/addr2line
 ln -sf multicall pkg/tool/linux_amd64/buildid
 ln -sf multicall pkg/tool/linux_amd64/cover
 ln -sf multicall pkg/tool/linux_amd64/doc
+ln -sf multicall pkg/tool/linux_amd64/fix
 ln -sf multicall pkg/tool/linux_amd64/nm
 ln -sf multicall pkg/tool/linux_amd64/objdump
 ln -sf multicall pkg/tool/linux_amd64/pprof
