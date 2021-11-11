@@ -6,6 +6,7 @@ ln -sf multicall pkg/tool/linux_amd64/doc
 ln -sf multicall pkg/tool/linux_amd64/fix
 ln -sf multicall pkg/tool/linux_amd64/nm
 ln -sf multicall pkg/tool/linux_amd64/objdump
+ln -sf multicall pkg/tool/linux_amd64/pack
 ln -sf multicall pkg/tool/linux_amd64/pprof
 ln -sf multicall pkg/tool/linux_amd64/test2json
 ln -sf multicall pkg/tool/linux_amd64/trace

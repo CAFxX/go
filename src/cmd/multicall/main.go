@@ -8,6 +8,7 @@ import (
 	"cmd/internal/fix"
 	"cmd/internal/nm"
 	"cmd/internal/objdump"
+	"cmd/internal/pack"
 	"cmd/internal/pprof"
 	"cmd/internal/test2json"
 	"cmd/internal/trace"
@@ -33,6 +34,8 @@ func main() {
 		nm.Main()
 	case "objdump":
 		objdump.Main()
+	case "pack":
+		pack.Main()
 	case "pprof":
 		pprof.Main()
 	case "test2json":
