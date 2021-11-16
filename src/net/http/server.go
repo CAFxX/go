@@ -360,9 +360,9 @@ type chunkWriter struct {
 	chunking bool // using chunked transfer encoding for reply body
 }
 
-var (
-	crlf       = []byte("\r\n")
-	colonSpace = []byte(": ")
+const (
+	crlf       = "\r\n"
+	colonSpace = ": "
 )
 
 func (cw *chunkWriter) Write(p []byte) (n int, err error) {
@@ -382,7 +382,7 @@ func (cw *chunkWriter) Write(p []byte) (n int, err error) {
 	}
 	n, err = cw.res.conn.bufw.Write(p)
 	if cw.chunking && err == nil {
-		_, err = cw.res.conn.bufw.Write(crlf)
+		_, err = cw.res.conn.bufw.WriteString(crlf)
 	}
 	if err != nil {
 		cw.res.conn.rwc.Close()
@@ -1193,19 +1193,19 @@ func (h extraHeader) Write(w *bufio.Writer) {
 	if h.date != nil {
 		w.Write(headerDate)
 		w.Write(h.date)
-		w.Write(crlf)
+		w.WriteString(crlf)
 	}
 	if h.contentLength != nil {
 		w.Write(headerContentLength)
 		w.Write(h.contentLength)
-		w.Write(crlf)
+		w.WriteString(crlf)
 	}
 	for i, v := range []string{h.contentType, h.connection, h.transferEncoding} {
 		if v != "" {
 			w.Write(extraHeaderKeys[i])
-			w.Write(colonSpace)
+			w.WriteString(colonSpace)
 			w.WriteString(v)
-			w.Write(crlf)
+			w.WriteString(crlf)
 		}
 	}
 }
@@ -1484,7 +1484,7 @@ func (cw *chunkWriter) writeHeader(p []byte) {
 	writeStatusLine(w.conn.bufw, w.req.ProtoAtLeast(1, 1), code, w.statusBuf[:])
 	cw.header.WriteSubset(w.conn.bufw, excludeHeader)
 	setHeader.Write(w.conn.bufw)
-	w.conn.bufw.Write(crlf)
+	w.conn.bufw.WriteString(crlf)
 }
 
 // foreachHeaderElement splits v according to the "#rule" construction
@@ -1519,7 +1519,7 @@ func writeStatusLine(bw *bufio.Writer, is11 bool, code int, scratch []byte) {
 		bw.Write(strconv.AppendInt(scratch[:0], int64(code), 10))
 		bw.WriteByte(' ')
 		bw.WriteString(text)
-		bw.WriteString("\r\n")
+		bw.WriteString(crlf)
 	} else {
 		// don't worry about performance
 		fmt.Fprintf(bw, "%03d status code %d\r\n", code, code)
