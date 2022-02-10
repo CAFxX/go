@@ -4823,6 +4823,8 @@ func (pp *p) init(id int32) {
 	// Similarly, we may not go through pidleget before this P starts
 	// running if it is P 0 on startup.
 	idlepMask.clear(id)
+
+	pp.internStringTable.reset(256)
 }
 
 // destroy releases all of the resources associated with pp and

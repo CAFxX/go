@@ -1548,6 +1548,11 @@ func clearpools() {
 		poolcleanup()
 	}
 
+	// Clear string interning tables
+	// TODO: Instead of doing this here, schedule each p to perform its own
+	// cleanup after the world has restarted, but before normal code resumes.
+	internstringtablecleanup()
+
 	// Clear central sudog cache.
 	// Leave per-P caches alone, they have strictly bounded size.
 	// Disconnect cached list before dropping it on the floor,

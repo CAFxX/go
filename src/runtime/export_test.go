@@ -1350,3 +1350,13 @@ func NewPIController(kp, ti, tt, min, max float64) *PIController {
 func (c *PIController) Next(input, setpoint, period float64) (float64, bool) {
 	return c.piController.next(input, setpoint, period)
 }
+
+type InternStringTable = internStringTable
+
+func InternStringTableGet(t *InternStringTable, s string) string {
+	return t.get(s)
+}
+
+func InternStringTableReset(t *InternStringTable, n int) {
+	t.reset(n)
+}
