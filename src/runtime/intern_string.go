@@ -13,6 +13,17 @@ func InternString(s string) string {
 	return s
 }
 
+func InternBytes(b []byte) string {
+	mp := getg().m
+	mp.locks++
+	s := mp.p.ptr().internStringTable.getBytes(b)
+	mp.locks--
+	if s == "" {
+		s = string(b)
+	}
+	return s
+}
+
 type internStringTable struct {
 	table []string
 	seed  uint32
@@ -27,6 +38,8 @@ const (
 	internStringTableDirty
 )
 
+const replacementInterval = 16
+
 func (t *internStringTable) get(s string) string {
 	if len(t.table) == 0 {
 		return s
@@ -40,11 +53,36 @@ func (t *internStringTable) get(s string) string {
 	case s:
 		return t.table[i]
 	default:
-		if fastrandn(10) != 0 {
+		if fastrandn(replacementInterval) != 0 {
 			return s
 		}
 		fallthrough
 	case "":
+		t.table[i] = s
+		t.state = internStringTableUsed
+		return s
+	}
+}
+
+func (t *internStringTable) getBytes(b []byte) string {
+	if len(t.table) == 0 {
+		return ""
+	}
+	if t.state == internStringTableDirty {
+		t.reset(-1)
+	}
+	h := bytesHash(b, uintptr(t.seed))
+	i := mulhi(h, uintptr(len(t.table)))
+	switch t.table[i] {
+	case string(b):
+		return t.table[i]
+	default:
+		if fastrandn(replacementInterval) != 0 {
+			return ""
+		}
+		fallthrough
+	case "":
+		s := string(b)
 		t.table[i] = s
 		t.state = internStringTableUsed
 		return s

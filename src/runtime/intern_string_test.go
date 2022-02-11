@@ -68,3 +68,12 @@ func BenchmarkStringIntern(b *testing.B) {
 		}
 	})
 }
+
+func BenchmarkBytesIntern(b *testing.B) {
+	b.RunParallel(func(pb *testing.PB) {
+		s := []byte("hello world")
+		for pb.Next() {
+			runtime.InternBytes(s)
+		}
+	})
+}
