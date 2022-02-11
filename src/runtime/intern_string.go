@@ -74,7 +74,7 @@ func (t *internStringTable) getBytes(b []byte) string {
 	h := bytesHash(b, uintptr(t.seed))
 	i := mulhi(h, uintptr(len(t.table)))
 	switch t.table[i] {
-	case string(b):
+	case slicebytetostringtmp(&b[0], len(b)):
 		return t.table[i]
 	default:
 		if fastrandn(replacementInterval) != 0 {
