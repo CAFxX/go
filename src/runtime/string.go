@@ -41,12 +41,8 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	if count == 0 {
 		return ""
 	}
-
-	// If there is just one string and either it is not on the stack
-	// or our result does not escape the calling frame (buf != nil),
-	// then we can return that string directly.
-	if count == 1 && (buf != nil || !stringDataOnStack(a[idx])) {
-		return a[idx]
+	if count == 1 {
+		return _concatstring1(buf, a[idx])
 	}
 	s, b := rawstringtmp(buf, l)
 	for _, x := range a {
@@ -56,20 +52,94 @@ func concatstrings(buf *tmpBuf, a []string) string {
 	return s
 }
 
+func _concatstring1(buf *tmpBuf, a0 string) string {
+	// If there is just one string and either it is not on the stack
+	// or our result does not escape the calling frame (buf != nil),
+	// or if the string is empty then we can return that string directly.
+	if len(a0) == 0 || buf != nil || !stringDataOnStack(a0) {
+		return a0
+	}
+	// Otherwise, allocate on the heap and clone the string.
+	// No need for rawstringtmp, as at this point buf == nil.
+	s, b := rawstring(len(a0))
+	copy(b, a0)
+	return s
+}
+
 func concatstring2(buf *tmpBuf, a0, a1 string) string {
-	return concatstrings(buf, []string{a0, a1})
+	if len(a0) == 0 {
+		return _concatstring1(buf, a1)
+	} else if len(a1) == 0 {
+		return _concatstring1(buf, a0)
+	} else if len(a1) > len(a0)+len(a1) {
+		throw("string concatenation too long")
+	}
+	s, b := rawstringtmp(buf, len(a0)+len(a1))
+	copy(b, a0)
+	copy(b[len(a0):], a1)
+	return s
 }
 
 func concatstring3(buf *tmpBuf, a0, a1, a2 string) string {
-	return concatstrings(buf, []string{a0, a1, a2})
+	if len(a0) == 0 {
+		return concatstring2(buf, a1, a2)
+	} else if len(a1) == 0 {
+		return concatstring2(buf, a0, a2)
+	} else if len(a2) == 0 {
+		return concatstring2(buf, a0, a1)
+	} else if len(a1) > len(a0)+len(a1) || len(a2) > len(a0)+len(a1)+len(a2) {
+		throw("string concatenation too long")
+	}
+	s, b := rawstringtmp(buf, len(a0)+len(a1)+len(a2))
+	copy(b, a0)
+	copy(b[len(a0):], a1)
+	copy(b[len(a0)+len(a1):], a2)
+	return s
 }
 
 func concatstring4(buf *tmpBuf, a0, a1, a2, a3 string) string {
-	return concatstrings(buf, []string{a0, a1, a2, a3})
+	if len(a0) == 0 {
+		return concatstring3(buf, a1, a2, a3)
+	} else if len(a1) == 0 {
+		return concatstring3(buf, a0, a2, a3)
+	} else if len(a2) == 0 {
+		return concatstring3(buf, a0, a1, a3)
+	} else if len(a3) == 0 {
+		return concatstring3(buf, a0, a1, a2)
+	} else if len(a1) > len(a0)+len(a1) || len(a2) > len(a0)+len(a1)+len(a2) ||
+		len(a3) > len(a0)+len(a1)+len(a2)+len(a3) {
+		throw("string concatenation too long")
+	}
+	s, b := rawstringtmp(buf, len(a0)+len(a1)+len(a2)+len(a3))
+	copy(b, a0)
+	copy(b[len(a0):], a1)
+	copy(b[len(a0)+len(a1):], a2)
+	copy(b[len(a0)+len(a1)+len(a2):], a3)
+	return s
 }
 
 func concatstring5(buf *tmpBuf, a0, a1, a2, a3, a4 string) string {
-	return concatstrings(buf, []string{a0, a1, a2, a3, a4})
+	if len(a0) == 0 && len(a1) == 0 && len(a2) == 0 && len(a3) == 0 {
+		return _concatstring1(buf, a4)
+	} else if len(a0) == 0 && len(a1) == 0 && len(a2) == 0 && len(a4) == 0 {
+		return _concatstring1(buf, a3)
+	} else if len(a0) == 0 && len(a1) == 0 && len(a3) == 0 && len(a4) == 0 {
+		return _concatstring1(buf, a2)
+	} else if len(a0) == 0 && len(a2) == 0 && len(a3) == 0 && len(a4) == 0 {
+		return _concatstring1(buf, a1)
+	} else if len(a1) == 0 && len(a2) == 0 && len(a3) == 0 && len(a4) == 0 {
+		return _concatstring1(buf, a0)
+	} else if len(a1) > len(a0)+len(a1) || len(a2) > len(a0)+len(a1)+len(a2) ||
+		len(a3) > len(a0)+len(a1)+len(a2)+len(a3) || len(a4) > len(a0)+len(a1)+len(a2)+len(a3)+len(a4) {
+		throw("string concatenation too long")
+	}
+	s, b := rawstringtmp(buf, len(a0)+len(a1)+len(a2)+len(a3)+len(a4))
+	copy(b, a0)
+	copy(b[len(a0):], a1)
+	copy(b[len(a0)+len(a1):], a2)
+	copy(b[len(a0)+len(a1)+len(a2):], a3)
+	copy(b[len(a0)+len(a1)+len(a2)+len(a3):], a4)
+	return s
 }
 
 // slicebytetostring converts a byte slice to a string.

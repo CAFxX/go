@@ -91,6 +91,39 @@ func BenchmarkConcatStringAndBytes(b *testing.B) {
 	}
 }
 
+func BenchmarkConcatStrings(b *testing.B) {
+	b.Run("2", func(b *testing.B) {
+		s1, s2 := "01234", "56789"
+		for i := 0; i < b.N; i++ {
+			_ = s1 + s2
+		}
+	})
+	b.Run("3", func(b *testing.B) {
+		s1, s2, s3 := "012", "3456", "789"
+		for i := 0; i < b.N; i++ {
+			_ = s1 + s2 + s3
+		}
+	})
+	b.Run("4", func(b *testing.B) {
+		s1, s2, s3, s4 := "012", "34", "567", "89"
+		for i := 0; i < b.N; i++ {
+			_ = s1 + s2 + s3 + s4
+		}
+	})
+	b.Run("5", func(b *testing.B) {
+		s1, s2, s3, s4, s5 := "0", "123", "45", "6", "789"
+		for i := 0; i < b.N; i++ {
+			_ = s1 + s2 + s3 + s4 + s5
+		}
+	})
+	b.Run("6", func(b *testing.B) {
+		s1, s2, s3, s4, s5, s6 := "0", "12", "345", "6", "78", "9"
+		for i := 0; i < b.N; i++ {
+			_ = s1 + s2 + s3 + s4 + s5 + s6
+		}
+	})		
+}
+
 var escapeString string
 
 func BenchmarkSliceByteToString(b *testing.B) {
