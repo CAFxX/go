@@ -93,7 +93,7 @@ func BenchmarkConcatStringAndBytes(b *testing.B) {
 }
 
 func BenchmarkConcatStrings(b *testing.B) {
-	const l = 30
+	const l = 30 // smaller than tmpStringBufSize
 	for n := 2; n <= 6; n++ {
 		for e := 0; e <= n; e++ {
 			if testing.Short() && e != 0 {
@@ -101,9 +101,11 @@ func BenchmarkConcatStrings(b *testing.B) {
 			}
 			ne := n - e
 			var s [6]string
-			sl := 0
 			for i := 0; i < ne; i++ {
 				s[i] = strings.Repeat("x", l*(i+1)/ne-l*i/ne)
+			}
+			sl := 0
+			for i := 0; i < n; i++ {
 				sl += len(s[i])
 			}
 			el := l
