@@ -5,6 +5,7 @@
 package runtime_test
 
 import (
+	"fmt"
 	"runtime"
 	"strconv"
 	"strings"
@@ -92,36 +93,54 @@ func BenchmarkConcatStringAndBytes(b *testing.B) {
 }
 
 func BenchmarkConcatStrings(b *testing.B) {
-	b.Run("2", func(b *testing.B) {
-		s1, s2 := "01234", "56789"
-		for i := 0; i < b.N; i++ {
-			_ = s1 + s2
+	const l = 30
+	for n := 2; n <= 6; n++ {
+		for e := 0; e <= n; e++ {
+			if testing.Short() && e != 0 {
+				continue
+			}
+			ne := n - e
+			var s [6]string
+			sl := 0
+			for i := 0; i < ne; i++ {
+				s[i] = strings.Repeat("x", l*(i+1)/ne-l*i/ne)
+				sl += len(s[i])
+			}
+			el := l
+			if ne == 0 {
+				el = 0
+			}
+			if sl != el {
+				b.Fatalf("string length sum is not %d: %d", el, sl)
+			}
+			b.Run(fmt.Sprintf("%d/%d", n, e), func(b *testing.B) {
+				switch n {
+				case 2:
+					for i := 0; i < b.N; i++ {
+						_ = s[0] + s[1]
+					}
+				case 3:
+					for i := 0; i < b.N; i++ {
+						_ = s[0] + s[1] + s[2]
+					}
+				case 4:
+					for i := 0; i < b.N; i++ {
+						_ = s[0] + s[1] + s[2] + s[3]
+					}
+				case 5:
+					for i := 0; i < b.N; i++ {
+						_ = s[0] + s[1] + s[2] + s[3] + s[4]
+					}
+				case 6:
+					for i := 0; i < b.N; i++ {
+						_ = s[0] + s[1] + s[2] + s[3] + s[4] + s[5]
+					}
+				default:
+					panic("unsupported n")
+				}
+			})
 		}
-	})
-	b.Run("3", func(b *testing.B) {
-		s1, s2, s3 := "012", "3456", "789"
-		for i := 0; i < b.N; i++ {
-			_ = s1 + s2 + s3
-		}
-	})
-	b.Run("4", func(b *testing.B) {
-		s1, s2, s3, s4 := "012", "34", "567", "89"
-		for i := 0; i < b.N; i++ {
-			_ = s1 + s2 + s3 + s4
-		}
-	})
-	b.Run("5", func(b *testing.B) {
-		s1, s2, s3, s4, s5 := "0", "123", "45", "6", "789"
-		for i := 0; i < b.N; i++ {
-			_ = s1 + s2 + s3 + s4 + s5
-		}
-	})
-	b.Run("6", func(b *testing.B) {
-		s1, s2, s3, s4, s5, s6 := "0", "12", "345", "6", "78", "9"
-		for i := 0; i < b.N; i++ {
-			_ = s1 + s2 + s3 + s4 + s5 + s6
-		}
-	})		
+	}
 }
 
 var escapeString string
