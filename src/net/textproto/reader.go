@@ -13,7 +13,6 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // A Reader implements convenience methods for reading requests
@@ -759,64 +758,94 @@ func canonicalMIMEHeaderKey(a []byte) (_ string, ok bool) {
 		a[i] = c
 		upper = c == '-' // for next time
 	}
-	commonHeaderOnce.Do(initCommonHeader)
-	// The compiler recognizes m[string(byteSlice)] as a special
-	// case, so a copy of a's bytes into a new string does not
-	// happen in this map lookup:
-	if v := commonHeader[string(a)]; v != "" {
-		return v, true
-	}
-	return string(a), true
+	return headerToString(a), true
 }
 
-// commonHeader interns common header strings.
-var commonHeader map[string]string
-
-var commonHeaderOnce sync.Once
-
-func initCommonHeader() {
-	commonHeader = make(map[string]string)
-	for _, v := range []string{
-		"Accept",
-		"Accept-Charset",
-		"Accept-Encoding",
-		"Accept-Language",
-		"Accept-Ranges",
-		"Cache-Control",
-		"Cc",
-		"Connection",
-		"Content-Id",
-		"Content-Language",
-		"Content-Length",
-		"Content-Transfer-Encoding",
-		"Content-Type",
-		"Cookie",
-		"Date",
-		"Dkim-Signature",
-		"Etag",
-		"Expires",
-		"From",
-		"Host",
-		"If-Modified-Since",
-		"If-None-Match",
-		"In-Reply-To",
-		"Last-Modified",
-		"Location",
-		"Message-Id",
-		"Mime-Version",
-		"Pragma",
-		"Received",
-		"Return-Path",
-		"Server",
-		"Set-Cookie",
-		"Subject",
-		"To",
-		"User-Agent",
-		"Via",
-		"X-Forwarded-For",
-		"X-Imforwards",
-		"X-Powered-By",
-	} {
-		commonHeader[v] = v
+// headerToString matches the canonical header name in the passed slice
+// and returns the singleton string instance of known, common headers.
+// If the header is not known, the passed slice is returned as a string.
+func headerToString(h []byte) (s string) {
+	switch string(h) {
+	case "Accept":
+		s = "Accept"
+	case "Accept-Charset":
+		s = "Accept-Charset"
+	case "Accept-Encoding":
+		s = "Accept-Encoding"
+	case "Accept-Language":
+		s = "Accept-Language"
+	case "Accept-Ranges":
+		s = "Accept-Ranges"
+	case "Cache-Control":
+		s = "Cache-Control"
+	case "Cc":
+		s = "Cc"
+	case "Connection":
+		s = "Connection"
+	case "Content-Id":
+		s = "Content-Id"
+	case "Content-Language":
+		s = "Content-Language"
+	case "Content-Length":
+		s = "Content-Length"
+	case "Content-Transfer-Encoding":
+		s = "Content-Transfer-Encoding"
+	case "Content-Type":
+		s = "Content-Type"
+	case "Cookie":
+		s = "Cookie"
+	case "Date":
+		s = "Date"
+	case "Dkim-Signature":
+		s = "Dkim-Signature"
+	case "Etag":
+		s = "Etag"
+	case "Expires":
+		s = "Expires"
+	case "From":
+		s = "From"
+	case "Host":
+		s = "Host"
+	case "If-Modified-Since":
+		s = "If-Modified-Since"
+	case "If-None-Match":
+		s = "If-None-Match"
+	case "In-Reply-To":
+		s = "In-Reply-To"
+	case "Last-Modified":
+		s = "Last-Modified"
+	case "Location":
+		s = "Location"
+	case "Message-Id":
+		s = "Message-Id"
+	case "Mime-Version":
+		s = "Mime-Version"
+	case "Pragma":
+		s = "Pragma"
+	case "Received":
+		s = "Received"
+	case "Return-Path":
+		s = "Return-Path"
+	case "Server":
+		s = "Server"
+	case "Set-Cookie":
+		s = "Set-Cookie"
+	case "Subject":
+		s = "Subject"
+	case "To":
+		s = "To"
+	case "User-Agent":
+		s = "User-Agent"
+	case "Via":
+		s = "Via"
+	case "X-Forwarded-For":
+		s = "X-Forwarded-For"
+	case "X-Imforwards":
+		s = "X-Imforwards"
+	case "X-Powered-By":
+		s = "X-Powered-By"
+	default:
+		s = string(h)
 	}
+	return
 }
