@@ -160,6 +160,9 @@ func fastrandn(n uint32) uint32 {
 //go:linkname sync_fastrandn sync.fastrandn
 func sync_fastrandn(n uint32) uint32 { return fastrandn(n) }
 
+//go:linkname internal_intern_fastrand internal/intern.fastrand
+func internal_intern_fastrand() uint32 { return fastrand() }
+
 //go:linkname net_fastrand net.fastrand
 func net_fastrand() uint32 { return fastrand() }
 

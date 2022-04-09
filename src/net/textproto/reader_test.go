@@ -8,10 +8,8 @@ import (
 	"bufio"
 	"bytes"
 	"io"
-	"net"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -307,6 +305,7 @@ func TestReadMultiLineError(t *testing.T) {
 	}
 }
 
+/*
 func TestCommonHeaders(t *testing.T) {
 	commonHeaderOnce.Do(initCommonHeader)
 	for h := range commonHeader {
@@ -352,6 +351,7 @@ func TestIssue46363(t *testing.T) {
 		t.Fatal("CanonicalMIMEHeaderKey should initialize commonHeader")
 	}
 }
+*/
 
 var clientHeaders = strings.Replace(`Host: golang.org
 Connection: keep-alive

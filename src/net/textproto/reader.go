@@ -8,10 +8,10 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"internal/intern"
 	"io"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // A Reader implements convenience methods for reading requests
@@ -519,7 +519,8 @@ func (r *Reader) ReadMIMEHeader() (MIMEHeader, error) {
 		}
 
 		// Skip initial spaces in value.
-		value := strings.TrimLeft(string(v), " \t")
+		vt := bytes.TrimLeft(v, " \t")
+		value := internBytes(vt, 256)
 
 		vv := m[key]
 		if vv == nil && len(strs) > 0 {
@@ -639,66 +640,16 @@ func canonicalMIMEHeaderKey(a []byte) string {
 		a[i] = c
 		upper = c == '-' // for next time
 	}
-	commonHeaderOnce.Do(initCommonHeader)
-	// The compiler recognizes m[string(byteSlice)] as a special
-	// case, so a copy of a's bytes into a new string does not
-	// happen in this map lookup:
-	if v := commonHeader[string(a)]; v != "" {
-		return v
-	}
-	return string(a)
+
+	return internBytes(a, 64)
 }
 
-// commonHeader interns common header strings.
-var commonHeader map[string]string
-
-var commonHeaderOnce sync.Once
-
-func initCommonHeader() {
-	commonHeader = make(map[string]string)
-	for _, v := range []string{
-		"Accept",
-		"Accept-Charset",
-		"Accept-Encoding",
-		"Accept-Language",
-		"Accept-Ranges",
-		"Cache-Control",
-		"Cc",
-		"Connection",
-		"Content-Id",
-		"Content-Language",
-		"Content-Length",
-		"Content-Transfer-Encoding",
-		"Content-Type",
-		"Cookie",
-		"Date",
-		"Dkim-Signature",
-		"Etag",
-		"Expires",
-		"From",
-		"Host",
-		"If-Modified-Since",
-		"If-None-Match",
-		"In-Reply-To",
-		"Last-Modified",
-		"Location",
-		"Message-Id",
-		"Mime-Version",
-		"Pragma",
-		"Received",
-		"Return-Path",
-		"Server",
-		"Set-Cookie",
-		"Subject",
-		"To",
-		"User-Agent",
-		"Via",
-		"X-Forwarded-For",
-		"X-Imforwards",
-		"X-Powered-By",
-	} {
-		commonHeader[v] = v
+// internBytes interns common header strings.
+func internBytes(s []byte, maxLen int) (is string) {
+	if len(s) > maxLen {
+		return string(s)
 	}
+	return intern.Bytes(s)
 }
 
 // isTokenTable is a copy of net/http/lex.go's isTokenTable.
