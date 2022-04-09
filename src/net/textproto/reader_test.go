@@ -305,6 +305,7 @@ func TestReadMultiLineError(t *testing.T) {
 	}
 }
 
+/*
 func TestCommonHeaders(t *testing.T) {
 	commonHeaderOnce.Do(initCommonHeader)
 	for h := range commonHeader {
@@ -323,7 +324,7 @@ func TestCommonHeaders(t *testing.T) {
 		t.Errorf("canonicalMIMEHeaderKey allocs = %v; want 0", n)
 	}
 }
-
+*/
 var clientHeaders = strings.Replace(`Host: golang.org
 Connection: keep-alive
 Cache-Control: max-age=0
