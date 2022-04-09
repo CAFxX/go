@@ -6111,6 +6111,23 @@ func sync_atomic_runtime_procUnpin() {
 	procUnpin()
 }
 
+//go:linkname internal_intern_runtime_procPin internal/intern.runtime_procPin
+//go:nosplit
+func internal_intern_runtime_procPin() map[string]string {
+	procPin()
+	pp := getg().m.p.ptr()
+	if pp.internTable == nil {
+		pp.internTable = make(map[string]string)
+	}
+	return pp.internTable
+}
+
+//go:linkname internal_intern_runtime_procUnpin internal/intern.runtime_procUnpin
+//go:nosplit
+func internal_intern_runtime_procUnpin() {
+	procUnpin()
+}
+
 // Active spinning for sync.Mutex.
 //
 //go:linkname sync_runtime_canSpin sync.runtime_canSpin
