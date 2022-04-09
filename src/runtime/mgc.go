@@ -1548,6 +1548,11 @@ func clearpools() {
 		poolcleanup()
 	}
 
+	// clear intern tables
+	for _, p := range allp {
+		p.internTable = nil
+	}
+
 	// Clear central sudog cache.
 	// Leave per-P caches alone, they have strictly bounded size.
 	// Disconnect cached list before dropping it on the floor,
