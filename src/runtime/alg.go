@@ -272,6 +272,16 @@ func ifaceeq(tab *itab, x, y unsafe.Pointer) bool {
 	return eq(x, y)
 }
 
+//go:linkname internal_intern_runtime_stringHash internal/intern.runtime_stringHash
+func internal_intern_runtime_stringHash(s string, seed uintptr) uintptr {
+	return stringHash(s, seed)
+}
+
+//go:linkname internal_intern_runtime_bytesHash internal/intern.runtime_bytesHash
+func internal_intern_runtime_bytesHash(b []byte, seed uintptr) uintptr {
+	return bytesHash(b, seed)
+}
+
 // Testing adapters for hash quality tests (see hash_test.go)
 func stringHash(s string, seed uintptr) uintptr {
 	return strhash(noescape(unsafe.Pointer(&s)), seed)

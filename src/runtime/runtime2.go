@@ -737,7 +737,8 @@ type p struct {
 	// scheduler ASAP (regardless of what G is running on it).
 	preempt bool
 
-	internTable map[string]string
+	internTable     *[1024]string
+	internTableSeed uintptr
 
 	// Padding is no longer needed. False sharing is now not a worry because p is large enough
 	// that its size class is an integer multiple of the cache line size (for any of our architectures).
