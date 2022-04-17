@@ -5,6 +5,7 @@
 package runtime_test
 
 import (
+	"fmt"
 	"internal/testenv"
 	"math"
 	"runtime"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 func TestChan(t *testing.T) {
@@ -1214,5 +1216,121 @@ func localWork(w int) {
 	}
 	if alwaysFalse {
 		workSink += foo
+	}
+}
+
+func BenchmarkChanFill(b *testing.B) {
+	for _, count := range []int{1, 10, 1000, 100000, 10000000} {
+		elems := make([]int, count*2)
+		elemsPtr := make([]unsafe.Pointer, count*2)
+		for _, mode := range []string{"const", "sweep", "random"} {
+			if count == 1 && mode != "const" {
+				continue
+			}
+			b.Run(fmt.Sprintf("%d/%s/native/noptr", count, mode), func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					n := nelem(count, mode)
+					if n > len(elems) {
+						b.Fatal("overflow")
+					} else if n == 0 {
+						continue
+					}
+					ch := make(chan int, n)
+					for j := 0; j < n; j++ {
+						ch <- elems[n]
+					}
+					close(ch)
+				}
+			})
+			b.Run(fmt.Sprintf("%d/%s/chansendn/noptr", count, mode), func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					n := nelem(count, mode)
+					if n > len(elems) {
+						b.Fatal("overflow")
+					} else if n == 0 {
+						continue
+					}
+					ch := make(chan int, n)
+					chptr := *(*unsafe.Pointer)(unsafe.Pointer(&ch))
+					e := runtime.Chansendn(chptr, unsafe.Pointer(&elems[0]), n)
+					if e != n {
+						b.Fatal("short copy")
+					}
+					close(ch)
+				}
+			})
+			b.Run(fmt.Sprintf("%d/%s/native/ptr", count, mode), func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					n := nelem(count, mode)
+					if n > len(elems) {
+						b.Fatal("overflow")
+					} else if n == 0 {
+						continue
+					}
+					ch := make(chan unsafe.Pointer, n)
+					for j := 0; j < n; j++ {
+						ch <- elemsPtr[n]
+					}
+					close(ch)
+				}
+			})
+			b.Run(fmt.Sprintf("%d/%s/chansendn/ptr", count, mode), func(b *testing.B) {
+				for i := 0; i < b.N; i++ {
+					n := nelem(count, mode)
+					if n > len(elems) {
+						b.Fatal("overflow")
+					} else if n == 0 {
+						continue
+					}
+					ch := make(chan unsafe.Pointer, n)
+					chptr := *(*unsafe.Pointer)(unsafe.Pointer(&ch))
+					e := runtime.Chansendn(chptr, unsafe.Pointer(&elemsPtr[0]), n)
+					if e != n {
+						b.Fatal("short copy")
+					}
+					close(ch)
+				}
+			})
+		}
+	}
+}
+
+var lastelem int
+
+func nelem(count int, mode string) int {
+	if count == 0 {
+		panic("count=0")
+	}
+	switch mode {
+	case "const":
+		return count
+	case "sweep":
+		lastelem++
+		if lastelem == count*2 {
+			lastelem = 0
+		}
+		return lastelem
+	case "random":
+		return int(runtime.Fastrandn(uint32(count * 2)))
+	default:
+		panic("unknown mode")
+	}
+}
+
+func TestChansendn(t *testing.T) {
+	elems := []int{5, 4, 3, 2, 1}
+	ch := make(chan int, len(elems))
+	chptr := *(*unsafe.Pointer)(unsafe.Pointer(&ch))
+	e := runtime.Chansendn(chptr, unsafe.Pointer(&elems[0]), len(elems))
+	if e != len(elems) {
+		t.Fatal("short copy")
+	}
+	close(ch)
+	var n int
+	for i := range ch {
+		if i != elems[n] {
+			t.Errorf("elem %d, got %d, want %d", n, i, elems[n])
+		}
+		n++
 	}
 }

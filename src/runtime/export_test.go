@@ -1351,3 +1351,7 @@ func NewPIController(kp, ti, tt, min, max float64) *PIController {
 func (c *PIController) Next(input, setpoint, period float64) (float64, bool) {
 	return c.piController.next(input, setpoint, period)
 }
+
+func Chansendn(ch unsafe.Pointer, base unsafe.Pointer, n int) int {
+	return chansendn((*hchan)(ch), base, n, true, getcallerpc())
+}

@@ -142,7 +142,7 @@ func full(c *hchan) bool {
 //
 //go:nosplit
 func chansend1(c *hchan, elem unsafe.Pointer) {
-	chansend(c, elem, true, getcallerpc())
+	chansendn(c, elem, 1, true, getcallerpc())
 }
 
 /*
@@ -158,16 +158,24 @@ func chansend1(c *hchan, elem unsafe.Pointer) {
  * the operation; we'll see that it's now closed.
  */
 func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
+	return chansendn(c, ep, 1, block, callerpc) == 1
+}
+
+/*
+ * chansendn is like chansend but attempts to send up to n elements.
+ * It returns the number of elements sent, that can be lower than n.
+ */
+func chansendn(c *hchan, ep unsafe.Pointer, n int, block bool, callerpc uintptr) int {
 	if c == nil {
 		if !block {
-			return false
+			return 0
 		}
 		gopark(nil, nil, waitReasonChanSendNilChan, traceEvGoStop, 2)
 		throw("unreachable")
 	}
 
 	if debugChan {
-		print("chansend: chan=", c, "\n")
+		print("chansend: chan=", c, " n=", n, "\n")
 	}
 
 	if raceenabled {
@@ -191,7 +199,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 	// guarantees forward progress. We rely on the side effects of lock release in
 	// chanrecv() and closechan() to update this thread's view of c.closed and full().
 	if !block && c.closed == 0 && full(c) {
-		return false
+		return 0
 	}
 
 	var t0 int64
@@ -210,28 +218,46 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		// Found a waiting receiver. We pass the value we want to send
 		// directly to the receiver, bypassing the channel buffer (if any).
 		send(c, sg, ep, func() { unlock(&c.lock) }, 3)
-		return true
+		return 1
 	}
 
 	if c.qcount < c.dataqsiz {
-		// Space is available in the channel buffer. Enqueue the element to send.
+		// Space is available in the channel buffer. Enqueue as many elements as possible.
 		qp := chanbuf(c, c.sendx)
 		if raceenabled {
 			racenotify(c, c.sendx, nil)
 		}
-		typedmemmove(c.elemtype, qp, ep)
-		c.sendx++
+		max := c.dataqsiz - c.qcount
+		if c.dataqsiz-c.sendx < max {
+			max = c.dataqsiz - c.sendx
+		}
+		if max > uint(maxInt) {
+			max = uint(maxInt)
+		}
+		var e int
+		if n == 1 {
+			typedmemmove(c.elemtype, qp, ep)
+			e = 1
+		} else if c.elemtype.ptrdata == 0 {
+			e = slicecopy(qp, int(max), ep, n, c.elemtype.size)
+		} else {
+			e = typedslicecopy(c.elemtype, qp, int(max), ep, n)
+		}
+		if e < 0 {
+			throw("slice copy returned negative length") // should never happen
+		}
+		c.sendx += uint(e)
+		c.qcount += uint(e)
 		if c.sendx == c.dataqsiz {
 			c.sendx = 0
 		}
-		c.qcount++
 		unlock(&c.lock)
-		return true
+		return e
 	}
 
 	if !block {
 		unlock(&c.lock)
-		return false
+		return 0
 	}
 
 	// Block on the channel. Some receiver will complete our operation for us.
@@ -282,7 +308,7 @@ func chansend(c *hchan, ep unsafe.Pointer, block bool, callerpc uintptr) bool {
 		}
 		panic(plainError("send on closed channel"))
 	}
-	return true
+	return 1
 }
 
 // send processes a send operation on an empty channel c.
