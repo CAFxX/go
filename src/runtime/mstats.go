@@ -419,17 +419,17 @@ func readmemstats_m(stats *MemStats) {
 		Frees   uint64
 	}
 	for i := range bySize {
-		bySize[i].Size = uint32(class_to_size[i])
+		bySize[i].Size = uint32(class_to_size(i))
 
 		// Malloc stats.
 		a := uint64(consStats.smallAllocCount[i])
-		totalAlloc += a * uint64(class_to_size[i])
+		totalAlloc += a * uint64(class_to_size(i))
 		nMalloc += a
 		bySize[i].Mallocs = a
 
 		// Free stats.
 		f := uint64(consStats.smallFreeCount[i])
-		totalFree += f * uint64(class_to_size[i])
+		totalFree += f * uint64(class_to_size(i))
 		nFree += f
 		bySize[i].Frees = f
 	}

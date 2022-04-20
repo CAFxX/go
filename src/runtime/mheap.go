@@ -1244,9 +1244,9 @@ HaveSpan:
 			s.nelems = 1
 			s.divMul = 0
 		} else {
-			s.elemsize = uintptr(class_to_size[sizeclass])
+			s.elemsize = uintptr(class_to_size(int(sizeclass)))
 			s.nelems = nbytes / s.elemsize
-			s.divMul = class_to_divmagic[sizeclass]
+			s.divMul = class_to_divmagic(int(sizeclass))
 		}
 
 		// Initialize mark and allocation structures.

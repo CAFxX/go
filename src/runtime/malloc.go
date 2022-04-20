@@ -355,7 +355,7 @@ var (
 )
 
 func mallocinit() {
-	if class_to_size[_TinySizeClass] != _TinySize {
+	if class_to_size(int(_TinySizeClass)) != _TinySize {
 		throw("bad TinySizeClass")
 	}
 
@@ -999,11 +999,11 @@ func mallocgc(size uintptr, typ *_type, needzero bool) unsafe.Pointer {
 		} else {
 			var sizeclass uint8
 			if size <= smallSizeMax-8 {
-				sizeclass = size_to_class8[divRoundUp(size, smallSizeDiv)]
+				sizeclass = size_to_class8(int(divRoundUp(size, smallSizeDiv)))
 			} else {
-				sizeclass = size_to_class128[divRoundUp(size-smallSizeMax, largeSizeDiv)]
+				sizeclass = size_to_class128(int(divRoundUp(size-smallSizeMax, largeSizeDiv)))
 			}
-			size = uintptr(class_to_size[sizeclass])
+			size = uintptr(class_to_size(int(sizeclass)))
 			spc := makeSpanClass(sizeclass, noscan)
 			span = c.alloc[spc]
 			v := nextFreeFast(span)

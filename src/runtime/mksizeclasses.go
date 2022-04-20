@@ -287,19 +287,19 @@ func printClasses(w io.Writer, classes []class) {
 	fmt.Fprintf(w, "_PageShift = %d\n", pageShift)
 	fmt.Fprintln(w, ")")
 
-	fmt.Fprint(w, "var class_to_size = [_NumSizeClasses]uint16 {")
+	fmt.Fprint(w, "func class_to_size(n int) uint16 { return [_NumSizeClasses]uint16 {")
 	for _, c := range classes {
 		fmt.Fprintf(w, "%d,", c.size)
 	}
-	fmt.Fprintln(w, "}")
+	fmt.Fprintln(w, "}[n] }")
 
-	fmt.Fprint(w, "var class_to_allocnpages = [_NumSizeClasses]uint8 {")
+	fmt.Fprint(w, "func class_to_allocnpages(n int) uint8 { return [_NumSizeClasses]uint8 {")
 	for _, c := range classes {
 		fmt.Fprintf(w, "%d,", c.npages)
 	}
-	fmt.Fprintln(w, "}")
+	fmt.Fprintln(w, "}[n] }")
 
-	fmt.Fprint(w, "var class_to_divmagic = [_NumSizeClasses]uint32 {")
+	fmt.Fprint(w, "func class_to_divmagic(n int) uint32 { return [_NumSizeClasses]uint32 {")
 	for _, c := range classes {
 		if c.size == 0 {
 			fmt.Fprintf(w, "0,")
@@ -307,7 +307,7 @@ func printClasses(w io.Writer, classes []class) {
 		}
 		fmt.Fprintf(w, "^uint32(0)/%d+1,", c.size)
 	}
-	fmt.Fprintln(w, "}")
+	fmt.Fprintln(w, "}[n] }")
 
 	// map from size to size class, for small sizes.
 	sc := make([]int, smallSizeMax/smallSizeDiv+1)
@@ -320,11 +320,11 @@ func printClasses(w io.Writer, classes []class) {
 			}
 		}
 	}
-	fmt.Fprint(w, "var size_to_class8 = [smallSizeMax/smallSizeDiv+1]uint8 {")
+	fmt.Fprint(w, "func size_to_class8(n int) uint8 { return [smallSizeMax/smallSizeDiv+1]uint8 {")
 	for _, v := range sc {
 		fmt.Fprintf(w, "%d,", v)
 	}
-	fmt.Fprintln(w, "}")
+	fmt.Fprintln(w, "}[n] }")
 
 	// map from size to size class, for large sizes.
 	sc = make([]int, (maxSmallSize-smallSizeMax)/largeSizeDiv+1)
@@ -337,9 +337,9 @@ func printClasses(w io.Writer, classes []class) {
 			}
 		}
 	}
-	fmt.Fprint(w, "var size_to_class128 = [(_MaxSmallSize-smallSizeMax)/largeSizeDiv+1]uint8 {")
+	fmt.Fprint(w, "func size_to_class128(n int) uint8 { return [(_MaxSmallSize-smallSizeMax)/largeSizeDiv+1]uint8 {")
 	for _, v := range sc {
 		fmt.Fprintf(w, "%d,", v)
 	}
-	fmt.Fprintln(w, "}")
+	fmt.Fprintln(w, "}[n] }")
 }

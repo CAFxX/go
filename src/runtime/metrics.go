@@ -59,7 +59,7 @@ func initMetrics() {
 		// value up to 2^53 and size classes are relatively small
 		// (nowhere near 2^48 even) so this will give us exact
 		// boundaries.
-		sizeClassBuckets[i] = float64(class_to_size[i] + 1)
+		sizeClassBuckets[i] = float64(class_to_size(i) + 1)
 	}
 	sizeClassBuckets = append(sizeClassBuckets, float64Inf())
 
@@ -397,8 +397,8 @@ func (a *heapStatsAggregate) compute() {
 		nf := uint64(a.smallFreeCount[i])
 		a.totalAllocs += na
 		a.totalFrees += nf
-		a.totalAllocated += na * uint64(class_to_size[i])
-		a.totalFreed += nf * uint64(class_to_size[i])
+		a.totalAllocated += na * uint64(class_to_size(i))
+		a.totalFreed += nf * uint64(class_to_size(i))
 	}
 	a.inObjects = a.totalAllocated - a.totalFreed
 	a.numObjects = a.totalAllocs - a.totalFrees
