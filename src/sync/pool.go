@@ -97,8 +97,8 @@ func (p *Pool) Put(x any) {
 		return
 	}
 	if race.Enabled {
+		// In race mode we randomly drop x on the floor.
 		if fastrandn(4) == 0 {
-			// Randomly drop x on floor.
 			return
 		}
 		race.ReleaseMerge(poolRaceAddr(x))
@@ -125,17 +125,33 @@ func (p *Pool) Put(x any) {
 // If Get would otherwise return nil and p.New is non-nil, Get returns
 // the result of calling p.New.
 func (p *Pool) Get() any {
+	var x any
 	if race.Enabled {
+		// In race mode we randomly pretend the pool is empty.
+		if fastrandn(8) == 0 {
+			if p.New != nil {
+				x = p.New()
+			}
+			return x
+		}
 		race.Disable()
 	}
 	l, pid := p.pin()
-	x := l.private
-	l.private = nil
+	// In race mode we randomly avoid using the private field.
+	if !(race.Enabled && fastrandn(4) == 0) {
+		x = l.private
+		l.private = nil
+	}
 	if x == nil {
 		// Try to pop the head of the local shard. We prefer
 		// the head over the tail for temporal locality of
 		// reuse.
-		x, _ = l.shared.popHead()
+		// In race mode we randomly pop the tail instead.
+		if race.Enabled && fastrandn(4) == 0 {
+			x, _ = l.shared.popTail()
+		} else {
+			x, _ = l.shared.popHead()
+		}
 		if x == nil {
 			x = p.getSlow(pid)
 		}
@@ -158,8 +174,13 @@ func (p *Pool) getSlow(pid int) any {
 	size := runtime_LoadAcquintptr(&p.localSize) // load-acquire
 	locals := p.local                            // load-consume
 	// Try to steal one element from other procs.
+	base := pid
+	// In race mode we sometimes start from a random proc.
+	if race.Enabled && fastrandn(4) == 0 {
+		base = int(fastrandn(uint32(size)))
+	}
 	for i := 0; i < int(size); i++ {
-		l := indexLocal(locals, (pid+i+1)%int(size))
+		l := indexLocal(locals, (base+i+1)%int(size))
 		if x, _ := l.shared.popTail(); x != nil {
 			return x
 		}
@@ -179,7 +200,7 @@ func (p *Pool) getSlow(pid int) any {
 		return x
 	}
 	for i := 0; i < int(size); i++ {
-		l := indexLocal(locals, (pid+i)%int(size))
+		l := indexLocal(locals, (base+i)%int(size))
 		if x, _ := l.shared.popTail(); x != nil {
 			return x
 		}
