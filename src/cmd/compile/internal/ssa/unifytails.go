@@ -38,6 +38,8 @@ package ssa
 // This helps when multiple code paths do similar things (e.g. calling the same function
 // with different arguments on each path, returning different values on each path, ...).
 func unifytails(f *Func) {
+	m := make(map[valueSig][]Edge)
+
 	for changed := true; changed; {
 		changed = false
 		for _, bb := range f.Blocks {
@@ -45,10 +47,13 @@ func unifytails(f *Func) {
 				continue
 			}
 
-			m := make(map[valueSig][]Edge)
+			for k := range m {
+				delete(m, k)
+			}
+
 			for _, pe := range bb.Preds {
 				pbb := pe.Block()
-				if len(pbb.Succs) != 1 {
+				if len(pbb.Succs) != 1 || pbb.Kind != BlockPlain {
 					// The predecessor has multiple successors. We can't sink the last
 					// value, as we would need to sink it in all successors.
 					// TODO: Can we relax this restriction?
@@ -64,8 +69,21 @@ func unifytails(f *Func) {
 				if len(preds) < 2 {
 					continue
 				}
-				nbb := f.NewBlock()
+				nbb := f.NewBlock(BlockPlain)
+				// TODO: in nbb, add Phis for the the Values used by the Value
+				// TODO: in nbb, add the Value
+				nbb.AddEdgeTo(bb)
+				// TODO: in bb, update the P
+				for _, pred := range preds {
+					updateEdge(pred, nbb)
+				}
 			}
 		}
 	}
 }
+
+func getValueSig(v *Value) (valueSig, bool) {
+	return "", false
+}
+
+type valueSig string
