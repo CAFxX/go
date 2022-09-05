@@ -305,3 +305,14 @@ func TestDebugCallPanic(t *testing.T) {
 		t.Fatalf("wanted panic %v, got %v", "test", p)
 	}
 }
+
+func BenchmarkGOMAXPROCS(b *testing.B) {
+	var P atomic.Int64
+	b.RunParallel(func(pb *testing.PB) {
+		p := 0
+		for pb.Next() {
+			p = runtime.GOMAXPROCS(0)
+		}
+		P.Store(int64(p))
+	})
+}

@@ -14,23 +14,34 @@ import (
 // the value of runtime.NumCPU. If n < 1, it does not change the current setting.
 // This call will go away when the scheduler improves.
 func GOMAXPROCS(n int) int {
+	ret := int(gomaxprocs)
+
+	if n < 1 {
+		// Fast path for the case in which we just need to return the
+		// current GOMAXPROCS.
+		return ret
+	}
 	if GOARCH == "wasm" && n > 1 {
 		n = 1 // WebAssembly has no threads yet, so only one CPU is possible.
 	}
-
-	lock(&sched.lock)
-	ret := int(gomaxprocs)
-	unlock(&sched.lock)
-	if n <= 0 || n == ret {
-		return ret
+	if n == ret {
+		return ret // Nothing to do, avoid stopping/restarting the world.
 	}
 
+	return setGOMAXPROCS(n)
+}
+
+func setGOMAXPROCS(n int) int {
 	stopTheWorldGC("GOMAXPROCS")
 
 	// newprocs will be processed by startTheWorld
 	newprocs = int32(n)
+	// gomaxprocs may have changed since the start of GOMAXPROCS, so reload
+	// the value now to ensure that concurrent calls see consistent results.
+	ret := int(gomaxprocs)
 
 	startTheWorldGC()
+
 	return ret
 }
 
