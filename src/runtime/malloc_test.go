@@ -62,6 +62,14 @@ func TestMemStats(t *testing.T) {
 			return fmt.Errorf("want %v", x)
 		}
 	}
+	gc := func(fn func(any) error) func(any) error {
+		return func(x any) error {
+			if os.Getenv("GOGC") == "off" {
+				return nil
+			}
+			return fn(x)
+		}
+	}
 	// Of the uint fields, HeapReleased, HeapIdle can be 0.
 	// PauseTotalNs can be 0 if timer resolution is poor.
 	fields := map[string][]func(any) error{
@@ -73,7 +81,7 @@ func TestMemStats(t *testing.T) {
 		"MSpanInuse": {nz, le(1e10)}, "MSpanSys": {nz, le(1e10)},
 		"MCacheInuse": {nz, le(1e10)}, "MCacheSys": {nz, le(1e10)},
 		"BuckHashSys": {nz, le(1e10)}, "GCSys": {nz, le(1e10)}, "OtherSys": {nz, le(1e10)},
-		"NextGC": {nz, le(1e10)}, "LastGC": {nz},
+		"NextGC": {nz, gc(le(1e10))}, "LastGC": {nz},
 		"PauseTotalNs": {le(1e11)}, "PauseNs": nil, "PauseEnd": nil,
 		"NumGC": {nz, le(1e9)}, "NumForcedGC": {nz, le(1e9)},
 		"GCCPUFraction": {le(0.99)}, "EnableGC": {eq(true)}, "DebugGC": {eq(false)},

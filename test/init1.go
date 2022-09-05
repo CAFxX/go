@@ -8,7 +8,10 @@
 
 package main
 
-import "runtime"
+import (
+	"os"
+	"runtime"
+)
 
 var x []byte
 
@@ -16,6 +19,10 @@ func init() {
 	c := make(chan int)
 	go send(c)
 	<-c
+
+	if os.Getenv("GOGC") == "off" {
+		return
+	}
 
 	const N = 1000
 	const MB = 1 << 20

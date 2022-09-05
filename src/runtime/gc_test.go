@@ -163,6 +163,9 @@ func TestPeriodicGC(t *testing.T) {
 	if runtime.GOARCH == "wasm" {
 		t.Skip("no sysmon on wasm yet")
 	}
+	if os.Getenv("GOGC") == "off" {
+		t.Skip("GC is disabled")
+	}
 
 	// Make sure we're not in the middle of a GC.
 	runtime.GC()
