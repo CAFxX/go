@@ -135,6 +135,46 @@ func (rw *RWMutex) rUnlockSlow(r int32) {
 	}
 }
 
+// TryRLockToLock attempts to atomically convert a held RLock
+// into a Lock. If it returns true, the RLock has been
+// converted into a Lock. If it returns false, the RLock has
+// not been converted into a writer Lock (this is normally
+// because otherwise the operation may result in a deadlock).
+// If TryRLockToLock returns false, you can
+// TryRLockToLock may panic if the RWMutex is not RLocked.
+func (rw *RWMutex) tryRLockToLock() bool {
+	// First, check there are no pending writers.
+	if !rw.w.TryLock() {
+		// There are pending writers: give up.
+		return false
+	}
+	// We now hold the writer lock; next atomically check if
+	// we are the only reader holding the reader lock, and if
+	// so transition it to the writer lock.
+	if !rw.readerCount.CompareAndSwap(1, -rwmutexMaxReaders) {
+		// There are other concurrent readers: give up.
+		// In this case we must give up the writer lock.
+		rw.w.Unlock()
+		// TODO: In this case we may also attempt to wait for
+		// all other readers to release the reader lock, and
+		// then resume (holding the writer lock).
+		return false
+	}
+	// We now hold the rwmutex in writer mode.
+	return true
+}
+
+// lockToRLock atomically converts a held Lock into a RLock.
+func (rw *RWMutex) lockToRLock() {
+	// Add ourselves as a pending reader.
+	rw.readerCount.Add(1)
+	// Perform a regular Unlock. Unlock, if there are pending
+	// readers, will atomically transition the RWMutex to a
+	// reader lock, and will wake up all other pending readers
+	// (we exclude ourselves by passing skip=1).
+	rw.unlock(1)
+}
+
 // Lock locks rw for writing.
 // If the lock is already locked for reading or writing,
 // Lock blocks until the lock is available.
@@ -196,6 +236,10 @@ func (rw *RWMutex) TryLock() bool {
 // goroutine. One goroutine may RLock (Lock) a RWMutex and then
 // arrange for another goroutine to RUnlock (Unlock) it.
 func (rw *RWMutex) Unlock() {
+	rw.unlock(0)
+}
+
+func (rw *RWMutex) unlock(skip int) {
 	if race.Enabled {
 		_ = rw.w.state
 		race.Release(unsafe.Pointer(&rw.readerSem))
@@ -209,8 +253,8 @@ func (rw *RWMutex) Unlock() {
 		fatal("sync: Unlock of unlocked RWMutex")
 	}
 	// Unblock blocked readers, if any.
-	for i := 0; i < int(r); i++ {
-		runtime_Semrelease(&rw.readerSem, false, 0)
+	for i := skip; i < int(r); i++ {
+		runtime_Semrelease(&rw.readerSem, false, 1)
 	}
 	// Allow other writers to proceed.
 	rw.w.Unlock()

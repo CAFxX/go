@@ -257,3 +257,18 @@ func (m *Mutex) unlockSlow(new int32) {
 		runtime_Semrelease(&m.sema, true, 1)
 	}
 }
+
+// unlockIf checks whether there are waiters that want to acquire
+// the lock; if there are, it unlocks the lock and returns true; otherwise
+// it returns false.
+func (m *Mutex) unlockIf(contended bool) bool {
+	state := atomic.LoadInt32(&m.state)
+	if state&mutexLocked == 0 {
+		fatal("sync: unlockIf of unlocked mutex")
+	}
+	if (state != mutexLocked) == contended {
+		m.Unlock()
+		return true
+	}
+	return false
+}
