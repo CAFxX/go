@@ -142,7 +142,7 @@ func (rw *RWMutex) rUnlockSlow(r int32) {
 // because otherwise the operation may result in a deadlock).
 // If TryRLockToLock returns false, you can
 // TryRLockToLock may panic if the RWMutex is not RLocked.
-func (rw *RWMutex) tryRLockToLock() bool {
+func (rw *RWMutex) TryRLockToLock() bool {
 	// First, check there are no pending writers.
 	if !rw.w.TryLock() {
 		// There are pending writers: give up.
@@ -164,8 +164,8 @@ func (rw *RWMutex) tryRLockToLock() bool {
 	return true
 }
 
-// lockToRLock atomically converts a held Lock into a RLock.
-func (rw *RWMutex) lockToRLock() {
+// LockToRLock atomically converts a held Lock into a RLock.
+func (rw *RWMutex) LockToRLock() {
 	// Add ourselves as a pending reader.
 	rw.readerCount.Add(1)
 	// Perform a regular Unlock. Unlock, if there are pending

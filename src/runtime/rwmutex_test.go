@@ -11,10 +11,13 @@ package runtime_test
 
 import (
 	"fmt"
+	"math/rand"
 	. "runtime"
 	"runtime/debug"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func parallelReader(m *RWMutex, clocked chan bool, cunlock *atomic.Bool, cdone chan bool) {
@@ -188,4 +191,102 @@ func BenchmarkRWMutexWorkWrite100(b *testing.B) {
 
 func BenchmarkRWMutexWorkWrite10(b *testing.B) {
 	benchmarkRWMutex(b, 100, 10)
+}
+
+type counts struct {
+	UnlockedToLocked  int
+	UnlockedToRlocked int
+	RLockedToUnlocked int
+	RLockedToLocked   int
+	LockedToUnlocked  int
+	LockedToRLocked   int
+}
+
+func HammerRWMutexEx(m *sync.RWMutex, done *atomic.Bool) counts {
+	type tstate int
+	const (
+		unlocked tstate = iota
+		rlocked
+		locked
+	)
+	var (
+		state tstate
+		count counts
+		rnd   = rand.New(rand.NewSource(rand.Int63()))
+	)
+	for !done.Load() {
+		switch state {
+		case unlocked:
+			switch rnd.Intn(2) {
+			case 0:
+				m.RLock()
+				state = rlocked
+				count.UnlockedToRlocked++
+			case 1:
+				m.Lock()
+				state = locked
+				count.UnlockedToLocked++
+			}
+		case rlocked:
+			switch rnd.Intn(2) {
+			case 0:
+				m.RUnlock()
+				state = unlocked
+				count.RLockedToUnlocked++
+			case 1:
+				if m.TryRLockToLock() {
+					state = locked
+					count.RLockedToLocked++
+				}
+			}
+		case locked:
+			switch rnd.Intn(2) {
+			case 0:
+				m.Unlock()
+				state = unlocked
+				count.LockedToUnlocked++
+			case 1:
+				m.LockToRLock()
+				state = rlocked
+				count.LockedToRLocked++
+			}
+		}
+	}
+	switch state {
+	case rlocked:
+		m.RUnlock()
+		count.RLockedToUnlocked++
+	case locked:
+		m.Unlock()
+		count.LockedToUnlocked++
+	}
+	return count
+}
+
+func TestHammerRWMutexEx(t *testing.T) {
+	var m sync.RWMutex
+	var done atomic.Bool
+	var wg sync.WaitGroup
+	Ps := GOMAXPROCS(0)
+	var tcountmu sync.Mutex
+	var tcount counts
+	for i := 0; i < Ps; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			count := HammerRWMutexEx(&m, &done)
+			tcountmu.Lock()
+			tcount.UnlockedToLocked += count.UnlockedToLocked
+			tcount.UnlockedToRlocked += count.UnlockedToRlocked
+			tcount.RLockedToUnlocked += count.RLockedToUnlocked
+			tcount.RLockedToLocked += count.RLockedToLocked
+			tcount.LockedToUnlocked += count.LockedToUnlocked
+			tcount.LockedToRLocked += count.LockedToRLocked
+			tcountmu.Unlock()
+		}()
+	}
+	<-time.After(1 * time.Second)
+	done.Store(true)
+	wg.Wait()
+	t.Logf("%+v", tcount)
 }
