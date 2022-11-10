@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"reflect"
 	"unsafe"
 )
 
@@ -53,7 +52,7 @@ func min(a, b int) int {
 }
 
 // mutate performs several mutations on the provided values.
-func (m *mutator) mutate(vals []interface{}, maxBytes int) {
+func (m *mutator) mutate(vals []any, maxBytes int) {
 	// TODO(katiehockman): pull some of these functions into helper methods and
 	// test that each case is working as expected.
 	// TODO(katiehockman): perform more types of mutations for []byte.
@@ -125,15 +124,13 @@ func (m *mutator) mutate(vals []interface{}, maxBytes int) {
 }
 
 func (m *mutator) mutateInt(v, maxValue int64) int64 {
-	numIters := 1 + m.r.exp2()
 	var max int64
-	for iter := 0; iter < numIters; iter++ {
+	for {
 		max = 100
 		switch m.rand(2) {
 		case 0:
 			// Add a random number
 			if v >= maxValue {
-				iter--
 				continue
 			}
 			if v > 0 && maxValue-v < max {
@@ -141,10 +138,10 @@ func (m *mutator) mutateInt(v, maxValue int64) int64 {
 				max = maxValue - v
 			}
 			v += int64(1 + m.rand(int(max)))
+			return v
 		case 1:
 			// Subtract a random number
 			if v <= -maxValue {
-				iter--
 				continue
 			}
 			if v < 0 && maxValue+v < max {
@@ -152,21 +149,19 @@ func (m *mutator) mutateInt(v, maxValue int64) int64 {
 				max = maxValue + v
 			}
 			v -= int64(1 + m.rand(int(max)))
+			return v
 		}
 	}
-	return v
 }
 
 func (m *mutator) mutateUInt(v, maxValue uint64) uint64 {
-	numIters := 1 + m.r.exp2()
 	var max uint64
-	for iter := 0; iter < numIters; iter++ {
+	for {
 		max = 100
 		switch m.rand(2) {
 		case 0:
 			// Add a random number
 			if v >= maxValue {
-				iter--
 				continue
 			}
 			if v > 0 && maxValue-v < max {
@@ -175,10 +170,10 @@ func (m *mutator) mutateUInt(v, maxValue uint64) uint64 {
 			}
 
 			v += uint64(1 + m.rand(int(max)))
+			return v
 		case 1:
 			// Subtract a random number
 			if v <= 0 {
-				iter--
 				continue
 			}
 			if v < max {
@@ -186,20 +181,18 @@ func (m *mutator) mutateUInt(v, maxValue uint64) uint64 {
 				max = v
 			}
 			v -= uint64(1 + m.rand(int(max)))
+			return v
 		}
 	}
-	return v
 }
 
 func (m *mutator) mutateFloat(v, maxValue float64) float64 {
-	numIters := 1 + m.r.exp2()
 	var max float64
-	for iter := 0; iter < numIters; iter++ {
+	for {
 		switch m.rand(4) {
 		case 0:
 			// Add a random number
 			if v >= maxValue {
-				iter--
 				continue
 			}
 			max = 100
@@ -208,10 +201,10 @@ func (m *mutator) mutateFloat(v, maxValue float64) float64 {
 				max = maxValue - v
 			}
 			v += float64(1 + m.rand(int(max)))
+			return v
 		case 1:
 			// Subtract a random number
 			if v <= -maxValue {
-				iter--
 				continue
 			}
 			max = 100
@@ -220,11 +213,11 @@ func (m *mutator) mutateFloat(v, maxValue float64) float64 {
 				max = maxValue + v
 			}
 			v -= float64(1 + m.rand(int(max)))
+			return v
 		case 2:
 			// Multiply by a random number
 			absV := math.Abs(v)
 			if v == 0 || absV >= maxValue {
-				iter--
 				continue
 			}
 			max = 10
@@ -233,16 +226,16 @@ func (m *mutator) mutateFloat(v, maxValue float64) float64 {
 				max = maxValue / absV
 			}
 			v *= float64(1 + m.rand(int(max)))
+			return v
 		case 3:
 			// Divide by a random number
 			if v == 0 {
-				iter--
 				continue
 			}
 			v /= float64(1 + m.rand(10))
+			return v
 		}
 	}
-	return v
 }
 
 type byteSliceMutator func(*mutator, []byte) []byte
@@ -271,23 +264,18 @@ var byteSliceMutators = []byteSliceMutator{
 func (m *mutator) mutateBytes(ptrB *[]byte) {
 	b := *ptrB
 	defer func() {
-		oldHdr := (*reflect.SliceHeader)(unsafe.Pointer(ptrB))
-		newHdr := (*reflect.SliceHeader)(unsafe.Pointer(&b))
-		if oldHdr.Data != newHdr.Data {
+		if unsafe.SliceData(*ptrB) != unsafe.SliceData(b) {
 			panic("data moved to new address")
 		}
 		*ptrB = b
 	}()
 
-	numIters := 1 + m.r.exp2()
-	for iter := 0; iter < numIters; iter++ {
+	for {
 		mut := byteSliceMutators[m.rand(len(byteSliceMutators))]
-		mutated := mut(m, b)
-		if mutated == nil {
-			iter--
-			continue
+		if mutated := mut(m, b); mutated != nil {
+			b = mutated
+			return
 		}
-		b = mutated
 	}
 }
 

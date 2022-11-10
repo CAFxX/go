@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build darwin && !ios
+//go:build darwin
 
 package macOS
 
@@ -15,6 +15,7 @@ import (
 )
 
 // Security.framework linker flags for the external linker. See Issue 42459.
+//
 //go:cgo_ldflag "-framework"
 //go:cgo_ldflag "Security"
 
@@ -92,20 +93,6 @@ func SecTrustSettingsCopyCertificates(domain SecTrustSettingsDomain) (certArray 
 }
 func x509_SecTrustSettingsCopyCertificates_trampoline()
 
-const kSecFormatX509Cert int32 = 9
-
-//go:cgo_import_dynamic x509_SecItemExport SecItemExport "/System/Library/Frameworks/Security.framework/Versions/A/Security"
-
-func SecItemExport(cert CFRef) (data CFRef, err error) {
-	ret := syscall(abi.FuncPCABI0(x509_SecItemExport_trampoline), uintptr(cert), uintptr(kSecFormatX509Cert),
-		0 /* flags */, 0 /* keyParams */, uintptr(unsafe.Pointer(&data)), 0)
-	if ret != 0 {
-		return 0, OSStatus{"SecItemExport", int32(ret)}
-	}
-	return data, nil
-}
-func x509_SecItemExport_trampoline()
-
 const errSecItemNotFound = -25300
 
 //go:cgo_import_dynamic x509_SecTrustSettingsCopyTrustSettings SecTrustSettingsCopyTrustSettings "/System/Library/Frameworks/Security.framework/Versions/A/Security"
@@ -122,14 +109,6 @@ func SecTrustSettingsCopyTrustSettings(cert CFRef, domain SecTrustSettingsDomain
 }
 func x509_SecTrustSettingsCopyTrustSettings_trampoline()
 
-//go:cgo_import_dynamic x509_SecPolicyCopyProperties SecPolicyCopyProperties "/System/Library/Frameworks/Security.framework/Versions/A/Security"
-
-func SecPolicyCopyProperties(policy CFRef) CFRef {
-	ret := syscall(abi.FuncPCABI0(x509_SecPolicyCopyProperties_trampoline), uintptr(policy), 0, 0, 0, 0, 0)
-	return CFRef(ret)
-}
-func x509_SecPolicyCopyProperties_trampoline()
-
 //go:cgo_import_dynamic x509_SecTrustCreateWithCertificates SecTrustCreateWithCertificates "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 
 func SecTrustCreateWithCertificates(certs CFRef, policies CFRef) (CFRef, error) {
@@ -145,24 +124,32 @@ func x509_SecTrustCreateWithCertificates_trampoline()
 
 //go:cgo_import_dynamic x509_SecCertificateCreateWithData SecCertificateCreateWithData "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 
-func SecCertificateCreateWithData(b []byte) CFRef {
+func SecCertificateCreateWithData(b []byte) (CFRef, error) {
 	data := BytesToCFData(b)
+	defer CFRelease(data)
 	ret := syscall(abi.FuncPCABI0(x509_SecCertificateCreateWithData_trampoline), kCFAllocatorDefault, uintptr(data), 0, 0, 0, 0)
-	CFRelease(data)
-	return CFRef(ret)
+	// Returns NULL if the data passed in the data parameter is not a valid
+	// DER-encoded X.509 certificate.
+	if ret == 0 {
+		return 0, errors.New("SecCertificateCreateWithData: invalid certificate")
+	}
+	return CFRef(ret), nil
 }
 func x509_SecCertificateCreateWithData_trampoline()
 
 //go:cgo_import_dynamic x509_SecPolicyCreateSSL SecPolicyCreateSSL "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 
-func SecPolicyCreateSSL(name string) CFRef {
+func SecPolicyCreateSSL(name string) (CFRef, error) {
 	var hostname CFString
 	if name != "" {
 		hostname = StringToCFString(name)
 		defer CFRelease(CFRef(hostname))
 	}
 	ret := syscall(abi.FuncPCABI0(x509_SecPolicyCreateSSL_trampoline), 1 /* true */, uintptr(hostname), 0, 0, 0, 0)
-	return CFRef(ret)
+	if ret == 0 {
+		return 0, OSStatus{"SecPolicyCreateSSL", int32(ret)}
+	}
+	return CFRef(ret), nil
 }
 func x509_SecPolicyCreateSSL_trampoline()
 
@@ -228,8 +215,24 @@ func x509_SecTrustGetCertificateCount_trampoline()
 
 //go:cgo_import_dynamic x509_SecTrustGetCertificateAtIndex SecTrustGetCertificateAtIndex "/System/Library/Frameworks/Security.framework/Versions/A/Security"
 
-func SecTrustGetCertificateAtIndex(trustObj CFRef, i int) CFRef {
+func SecTrustGetCertificateAtIndex(trustObj CFRef, i int) (CFRef, error) {
 	ret := syscall(abi.FuncPCABI0(x509_SecTrustGetCertificateAtIndex_trampoline), uintptr(trustObj), uintptr(i), 0, 0, 0, 0)
-	return CFRef(ret)
+	if ret == 0 {
+		return 0, OSStatus{"SecTrustGetCertificateAtIndex", int32(ret)}
+	}
+	return CFRef(ret), nil
 }
 func x509_SecTrustGetCertificateAtIndex_trampoline()
+
+//go:cgo_import_dynamic x509_SecCertificateCopyData SecCertificateCopyData "/System/Library/Frameworks/Security.framework/Versions/A/Security"
+
+func SecCertificateCopyData(cert CFRef) ([]byte, error) {
+	ret := syscall(abi.FuncPCABI0(x509_SecCertificateCopyData_trampoline), uintptr(cert), 0, 0, 0, 0, 0)
+	if ret == 0 {
+		return nil, errors.New("x509: invalid certificate object")
+	}
+	b := CFDataToSlice(CFRef(ret))
+	CFRelease(CFRef(ret))
+	return b, nil
+}
+func x509_SecCertificateCopyData_trampoline()

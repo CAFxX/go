@@ -9,6 +9,7 @@ package types2
 import (
 	"cmd/compile/internal/syntax"
 	"go/constant"
+	. "internal/types/errors"
 )
 
 // If e is a valid function instantiation, indexExpr returns true.
@@ -34,7 +35,7 @@ func (check *Checker) indexExpr(x *operand, e *syntax.IndexExpr) (isFuncInst boo
 		return false
 
 	case value:
-		if sig := asSignature(x.typ); sig != nil && sig.TypeParams().Len() > 0 {
+		if sig, _ := under(x.typ).(*Signature); sig != nil && sig.TypeParams().Len() > 0 {
 			// function instantiation
 			return true
 		}
@@ -72,7 +73,7 @@ func (check *Checker) indexExpr(x *operand, e *syntax.IndexExpr) (isFuncInst boo
 		x.typ = typ.elem
 
 	case *Pointer:
-		if typ := asArray(typ.base); typ != nil {
+		if typ, _ := under(typ.base).(*Array); typ != nil {
 			valid = true
 			length = typ.len
 			x.mode = variable
@@ -99,12 +100,15 @@ func (check *Checker) indexExpr(x *operand, e *syntax.IndexExpr) (isFuncInst boo
 		x.expr = e
 		return false
 
-	case *TypeParam:
+	case *Interface:
+		if !isTypeParam(x.typ) {
+			break
+		}
 		// TODO(gri) report detailed failure cause for better error messages
 		var key, elem Type // key != nil: we must have all maps
 		mode := variable   // non-maps result mode
 		// TODO(gri) factor out closure and use it for non-typeparam cases as well
-		if typ.underIs(func(u Type) bool {
+		if typ.typeSet().underIs(func(u Type) bool {
 			l := int64(-1) // valid if >= 0
 			var k, e Type  // k is only set for maps
 			switch t := u.(type) {
@@ -120,7 +124,7 @@ func (check *Checker) indexExpr(x *operand, e *syntax.IndexExpr) (isFuncInst boo
 					mode = value
 				}
 			case *Pointer:
-				if t := asArray(t.base); t != nil {
+				if t, _ := under(t.base).(*Array); t != nil {
 					l = t.len
 					e = t.elem
 				}
@@ -179,7 +183,7 @@ func (check *Checker) indexExpr(x *operand, e *syntax.IndexExpr) (isFuncInst boo
 	}
 
 	if !valid {
-		check.errorf(x, invalidOp+"cannot index %s", x)
+		check.errorf(e.Pos(), NonSliceableOperand, invalidOp+"cannot index %s", x)
 		x.mode = invalid
 		return false
 	}
@@ -210,16 +214,20 @@ func (check *Checker) sliceExpr(x *operand, e *syntax.SliceExpr) {
 
 	valid := false
 	length := int64(-1) // valid if >= 0
-	switch u := structure(x.typ).(type) {
+	switch u := coreString(x.typ).(type) {
 	case nil:
-		check.errorf(x, invalidOp+"cannot slice %s: type set has no single underlying type", x)
+		check.errorf(x, NonSliceableOperand, invalidOp+"cannot slice %s: %s has no core type", x, x.typ)
 		x.mode = invalid
 		return
 
 	case *Basic:
 		if isString(u) {
 			if e.Full {
-				check.error(x, invalidOp+"3-index slice of string")
+				at := e.Index[2]
+				if at == nil {
+					at = e // e.Index[2] should be present but be careful
+				}
+				check.error(at, InvalidSliceExpr, invalidOp+"3-index slice of string")
 				x.mode = invalid
 				return
 			}
@@ -229,7 +237,7 @@ func (check *Checker) sliceExpr(x *operand, e *syntax.SliceExpr) {
 			}
 			// spec: "For untyped string operands the result
 			// is a non-constant value of type string."
-			if u.kind == UntypedString {
+			if isUntyped(x.typ) {
 				x.typ = Typ[String]
 			}
 		}
@@ -238,14 +246,14 @@ func (check *Checker) sliceExpr(x *operand, e *syntax.SliceExpr) {
 		valid = true
 		length = u.len
 		if x.mode != variable {
-			check.errorf(x, invalidOp+"%s (slice of unaddressable value)", x)
+			check.errorf(x, NonSliceableOperand, invalidOp+"%s (slice of unaddressable value)", x)
 			x.mode = invalid
 			return
 		}
 		x.typ = &Slice{elem: u.elem}
 
 	case *Pointer:
-		if u := asArray(u.base); u != nil {
+		if u, _ := under(u.base).(*Array); u != nil {
 			valid = true
 			length = u.len
 			x.typ = &Slice{elem: u.elem}
@@ -257,7 +265,7 @@ func (check *Checker) sliceExpr(x *operand, e *syntax.SliceExpr) {
 	}
 
 	if !valid {
-		check.errorf(x, invalidOp+"cannot slice %s", x)
+		check.errorf(x, NonSliceableOperand, invalidOp+"cannot slice %s", x)
 		x.mode = invalid
 		return
 	}
@@ -266,7 +274,7 @@ func (check *Checker) sliceExpr(x *operand, e *syntax.SliceExpr) {
 
 	// spec: "Only the first index may be omitted; it defaults to 0."
 	if e.Full && (e.Index[1] == nil || e.Index[2] == nil) {
-		check.error(e, invalidAST+"2nd and 3rd index required in 3-index slice")
+		check.error(e, InvalidSyntaxTree, "2nd and 3rd index required in 3-index slice")
 		x.mode = invalid
 		return
 	}
@@ -302,9 +310,12 @@ func (check *Checker) sliceExpr(x *operand, e *syntax.SliceExpr) {
 L:
 	for i, x := range ind[:len(ind)-1] {
 		if x > 0 {
-			for _, y := range ind[i+1:] {
-				if y >= 0 && x > y {
-					check.errorf(e, "invalid slice indices: %d > %d", x, y)
+			for j, y := range ind[i+1:] {
+				if y >= 0 && y < x {
+					// The value y corresponds to the expression e.Index[i+1+j].
+					// Because y >= 0, it must have been set from the expression
+					// when checking indices and thus e.Index[i+1+j] is not nil.
+					check.errorf(e.Index[i+1+j], SwappedSliceIndices, "invalid slice indices: %d < %d", y, x)
 					break L // only report one error, ok to continue
 				}
 			}
@@ -318,16 +329,16 @@ L:
 func (check *Checker) singleIndex(e *syntax.IndexExpr) syntax.Expr {
 	index := e.Index
 	if index == nil {
-		check.errorf(e, invalidAST+"missing index for %s", e.X)
+		check.errorf(e, InvalidSyntaxTree, "missing index for %s", e.X)
 		return nil
 	}
 	if l, _ := index.(*syntax.ListExpr); l != nil {
 		if n := len(l.ElemList); n <= 1 {
-			check.errorf(e, invalidAST+"invalid use of ListExpr for index expression %v with %d indices", e, n)
+			check.errorf(e, InvalidSyntaxTree, "invalid use of ListExpr for index expression %v with %d indices", e, n)
 			return nil
 		}
 		// len(l.ElemList) > 1
-		check.error(l.ElemList[1], invalidOp+"more than one index")
+		check.error(l.ElemList[1], InvalidIndex, invalidOp+"more than one index")
 		index = l.ElemList[0] // continue with first index
 	}
 	return index
@@ -343,7 +354,7 @@ func (check *Checker) index(index syntax.Expr, max int64) (typ Type, val int64) 
 
 	var x operand
 	check.expr(&x, index)
-	if !check.isValidIndex(&x, "index", false) {
+	if !check.isValidIndex(&x, InvalidIndex, "index", false) {
 		return
 	}
 
@@ -358,11 +369,7 @@ func (check *Checker) index(index syntax.Expr, max int64) (typ Type, val int64) 
 	v, ok := constant.Int64Val(x.val)
 	assert(ok)
 	if max >= 0 && v >= max {
-		if check.conf.CompilerErrorMessages {
-			check.errorf(&x, invalidArg+"array index %s out of bounds [0:%d]", x.val.String(), max)
-		} else {
-			check.errorf(&x, invalidArg+"index %s is out of bounds", &x)
-		}
+		check.errorf(&x, InvalidIndex, invalidArg+"index %s out of bounds [0:%d]", x.val.String(), max)
 		return
 	}
 
@@ -374,7 +381,7 @@ func (check *Checker) index(index syntax.Expr, max int64) (typ Type, val int64) 
 // index values. If allowNegative is set, a constant operand may be negative.
 // If the operand is not valid, an error is reported (using what as context)
 // and the result is false.
-func (check *Checker) isValidIndex(x *operand, what string, allowNegative bool) bool {
+func (check *Checker) isValidIndex(x *operand, code Code, what string, allowNegative bool) bool {
 	if x.mode == invalid {
 		return false
 	}
@@ -387,20 +394,20 @@ func (check *Checker) isValidIndex(x *operand, what string, allowNegative bool) 
 
 	// spec: "the index x must be of integer type or an untyped constant"
 	if !allInteger(x.typ) {
-		check.errorf(x, invalidArg+"%s %s must be integer", what, x)
+		check.errorf(x, code, invalidArg+"%s %s must be integer", what, x)
 		return false
 	}
 
 	if x.mode == constant_ {
 		// spec: "a constant index must be non-negative ..."
 		if !allowNegative && constant.Sign(x.val) < 0 {
-			check.errorf(x, invalidArg+"%s %s must not be negative", what, x)
+			check.errorf(x, code, invalidArg+"%s %s must not be negative", what, x)
 			return false
 		}
 
 		// spec: "... and representable by a value of type int"
 		if !representableConst(x.val, check, Typ[Int], &x.val) {
-			check.errorf(x, invalidArg+"%s %s overflows int", what, x)
+			check.errorf(x, code, invalidArg+"%s %s overflows int", what, x)
 			return false
 		}
 	}
@@ -425,12 +432,12 @@ func (check *Checker) indexedElts(elts []syntax.Expr, typ Type, length int64) in
 					index = i
 					validIndex = true
 				} else {
-					check.errorf(e, "index %s must be integer constant", kv.Key)
+					check.errorf(e, InvalidLitIndex, "index %s must be integer constant", kv.Key)
 				}
 			}
 			eval = kv.Value
 		} else if length >= 0 && index >= length {
-			check.errorf(e, "index %d is out of bounds (>= %d)", index, length)
+			check.errorf(e, OversizeArrayLit, "index %d is out of bounds (>= %d)", index, length)
 		} else {
 			validIndex = true
 		}
@@ -438,7 +445,7 @@ func (check *Checker) indexedElts(elts []syntax.Expr, typ Type, length int64) in
 		// if we have a valid index, check for duplicate entries
 		if validIndex {
 			if visited[index] {
-				check.errorf(e, "duplicate index %d in array or slice literal", index)
+				check.errorf(e, DuplicateLitKey, "duplicate index %d in array or slice literal", index)
 			}
 			visited[index] = true
 		}

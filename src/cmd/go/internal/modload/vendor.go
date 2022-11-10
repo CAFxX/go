@@ -98,16 +98,16 @@ func readVendorList(mainModule module.Version) {
 				continue
 			}
 
-			if strings.HasPrefix(line, "## ") {
+			if annonations, ok := strings.CutPrefix(line, "## "); ok {
 				// Metadata. Take the union of annotations across multiple lines, if present.
 				meta := vendorMeta[mod]
-				for _, entry := range strings.Split(strings.TrimPrefix(line, "## "), ";") {
+				for _, entry := range strings.Split(annonations, ";") {
 					entry = strings.TrimSpace(entry)
 					if entry == "explicit" {
 						meta.Explicit = true
 					}
-					if strings.HasPrefix(entry, "go ") {
-						meta.GoVersion = strings.TrimPrefix(entry, "go ")
+					if goVersion, ok := strings.CutPrefix(entry, "go "); ok {
+						meta.GoVersion = goVersion
 						rawGoVersion.Store(mod, meta.GoVersion)
 					}
 					// All other tokens are reserved for future use.
@@ -147,7 +147,7 @@ func checkVendorConsistency(index *modFileIndex, modFile *modfile.File) {
 	}
 
 	vendErrors := new(strings.Builder)
-	vendErrorf := func(mod module.Version, format string, args ...interface{}) {
+	vendErrorf := func(mod module.Version, format string, args ...any) {
 		detail := fmt.Sprintf(format, args...)
 		if mod.Version == "" {
 			fmt.Fprintf(vendErrors, "\n\t%s: %s", mod.Path, detail)

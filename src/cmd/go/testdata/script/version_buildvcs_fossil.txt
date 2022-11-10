@@ -3,15 +3,15 @@
 # The Git test covers common functionality.
 
 # "fossil" is the Fossil file server on Plan 9.
-[plan9] skip
+[GOOS:plan9] skip
 [!exec:fossil] skip
 [short] skip
 env GOBIN=$WORK/gopath/bin
 env oldpath=$PATH
 env HOME=$WORK
 env USER=gopher
-[!windows] env fslckout=.fslckout
-[windows] env fslckout=_FOSSIL_
+[!GOOS:windows] env fslckout=.fslckout
+[GOOS:windows] env fslckout=_FOSSIL_
 exec pwd
 exec fossil init repo.fossil
 cd repo/a
@@ -19,13 +19,13 @@ cd repo/a
 # If there's no local repository, there's no VCS info.
 go install
 go version -m $GOBIN/a$GOEXE
-! stdout fossilrevision
+! stdout vcs.revision
 rm $GOBIN/a$GOEXE
 
 # If there is a repository, but it can't be used for some reason,
 # there should be an error. It should hint about -buildvcs=false.
 cd ..
-mkdir $fslckout
+mv fslckout $fslckout
 env PATH=$WORK${/}fakebin${:}$oldpath
 chmod 0755 $WORK/fakebin/fossil
 ! exec fossil help
@@ -44,30 +44,33 @@ exec fossil commit -m 'initial commit'
 cd a
 go install
 go version -m $GOBIN/a$GOEXE
-stdout '^\tbuild\tfossilrevision\t'
-stdout '^\tbuild\tfossilcommittime\t'
-stdout '^\tbuild\tfossiluncommitted\tfalse$'
+stdout '^\tbuild\tvcs=fossil\n'
+stdout '^\tbuild\tvcs.revision='
+stdout '^\tbuild\tvcs.time='
+stdout '^\tbuild\tvcs.modified=false$'
 rm $GOBIN/a$GOEXE
 
 # Building with -buildvcs=false suppresses the info.
 go install -buildvcs=false
 go version -m $GOBIN/a$GOEXE
-! stdout fossilrevision
+! stdout vcs.revision
 rm $GOBIN/a$GOEXE
 
-# An untracked file is shown as uncommitted, even if it isn't part of the build.
+# An untracked file is shown as modified, even if it isn't part of the build.
 cp ../../outside/empty.txt .
 go install
 go version -m $GOBIN/a$GOEXE
-stdout '^\tbuild\tfossiluncommitted\ttrue$'
+stdout '^\tbuild\tvcs=fossil\n'
+stdout '^\tbuild\tvcs.modified=true$'
 rm empty.txt
 rm $GOBIN/a$GOEXE
 
-# An edited file is shown as uncommitted, even if it isn't part of the build.
+# An edited file is shown as modified, even if it isn't part of the build.
 cp ../../outside/empty.txt ../README
 go install
 go version -m $GOBIN/a$GOEXE
-stdout '^\tbuild\tfossiluncommitted\ttrue$'
+stdout '^\tbuild\tvcs=fossil\n'
+stdout '^\tbuild\tvcs.modified=true$'
 exec fossil revert ../README
 rm $GOBIN/a$GOEXE
 
@@ -79,6 +82,7 @@ exit 1
 -- repo/README --
 Far out in the uncharted backwaters of the unfashionable end of the western
 spiral arm of the Galaxy lies a small, unregarded yellow sun.
+-- repo/fslckout --
 -- repo/a/go.mod --
 module example.com/a
 

@@ -920,7 +920,7 @@ func collectmachosyms(ctxt *Link) {
 		if ldr.AttrNotInSymbolTable(s) {
 			return false
 		}
-		name := ldr.RawSymName(s) // TODO: try not to read the name
+		name := ldr.SymName(s) // TODO: try not to read the name
 		if name == "" || name[0] == '.' {
 			return false
 		}
@@ -1019,17 +1019,17 @@ func machoShouldExport(ctxt *Link, ldr *loader.Loader, s loader.Sym) bool {
 	if ctxt.BuildMode == BuildModePlugin && strings.HasPrefix(ldr.SymExtname(s), objabi.PathToPrefix(*flagPluginPath)) {
 		return true
 	}
-	name := ldr.RawSymName(s)
-	if strings.HasPrefix(name, "go.itab.") {
+	name := ldr.SymName(s)
+	if strings.HasPrefix(name, "go:itab.") {
 		return true
 	}
-	if strings.HasPrefix(name, "type.") && !strings.HasPrefix(name, "type..") {
+	if strings.HasPrefix(name, "type:") && !strings.HasPrefix(name, "type:.") {
 		// reduce runtime typemap pressure, but do not
-		// export alg functions (type..*), as these
+		// export alg functions (type:.*), as these
 		// appear in pclntable.
 		return true
 	}
-	if strings.HasPrefix(name, "go.link.pkghash") {
+	if strings.HasPrefix(name, "go:link.pkghash") {
 		return true
 	}
 	return ldr.SymType(s) >= sym.SFirstWritable // only writable sections

@@ -5,7 +5,6 @@
 package io_test
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -142,7 +141,9 @@ func ExampleTeeReader() {
 	r = io.TeeReader(r, os.Stdout)
 
 	// Everything read from r will be copied to stdout.
-	io.ReadAll(r)
+	if _, err := io.ReadAll(r); err != nil {
+		log.Fatal(err)
+	}
 
 	// Output:
 	// some io.Reader stream to be read
@@ -237,7 +238,7 @@ func ExampleSeeker_Seek() {
 func ExampleMultiWriter() {
 	r := strings.NewReader("some io.Reader stream to be read\n")
 
-	var buf1, buf2 bytes.Buffer
+	var buf1, buf2 strings.Builder
 	w := io.MultiWriter(&buf1, &buf2)
 
 	if _, err := io.Copy(w, r); err != nil {

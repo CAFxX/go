@@ -12,6 +12,12 @@ import (
 )
 
 func TestCheckPtr(t *testing.T) {
+	// This test requires rebuilding packages with -d=checkptr=1,
+	// so it's somewhat slow.
+	if testing.Short() {
+		t.Skip("skipping test in -short mode")
+	}
+
 	t.Parallel()
 	testenv.MustHaveGoRun(t)
 
@@ -33,6 +39,8 @@ func TestCheckPtr(t *testing.T) {
 		{"CheckPtrSmall", "fatal error: checkptr: pointer arithmetic computed bad pointer value\n"},
 		{"CheckPtrSliceOK", ""},
 		{"CheckPtrSliceFail", "fatal error: checkptr: unsafe.Slice result straddles multiple allocations\n"},
+		{"CheckPtrStringOK", ""},
+		{"CheckPtrStringFail", "fatal error: checkptr: unsafe.String result straddles multiple allocations\n"},
 	}
 
 	for _, tc := range testCases {
@@ -57,6 +65,12 @@ func TestCheckPtr(t *testing.T) {
 }
 
 func TestCheckPtr2(t *testing.T) {
+	// This test requires rebuilding packages with -d=checkptr=2,
+	// so it's somewhat slow.
+	if testing.Short() {
+		t.Skip("skipping test in -short mode")
+	}
+
 	t.Parallel()
 	testenv.MustHaveGoRun(t)
 

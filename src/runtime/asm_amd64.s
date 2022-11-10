@@ -136,37 +136,34 @@ GLOBL bad_cpu_msg<>(SB), RODATA, $84
 #define NEED_EXT_FEATURES_CX V4_EXT_FEATURES_CX
 #define NEED_EXT_FEATURES_BX V4_EXT_FEATURES_BX
 
-// Downgrading v4 OS checks on Darwin for now, see CL 285572.
+// Darwin requires a different approach to check AVX512 support, see CL 285572.
 #ifdef GOOS_darwin
 #define NEED_OS_SUPPORT_AX V3_OS_SUPPORT_AX
+// These values are from:
+// https://github.com/apple/darwin-xnu/blob/xnu-4570.1.46/osfmk/i386/cpu_capabilities.h
+#define commpage64_base_address         0x00007fffffe00000
+#define commpage64_cpu_capabilities64   (commpage64_base_address+0x010)
+#define commpage64_version              (commpage64_base_address+0x01E)
+#define hasAVX512F                      0x0000004000000000
+#define hasAVX512CD                     0x0000008000000000
+#define hasAVX512DQ                     0x0000010000000000
+#define hasAVX512BW                     0x0000020000000000
+#define hasAVX512VL                     0x0000100000000000
+#define NEED_DARWIN_SUPPORT             (hasAVX512F | hasAVX512DQ | hasAVX512CD | hasAVX512BW | hasAVX512VL)
 #else
 #define NEED_OS_SUPPORT_AX V4_OS_SUPPORT_AX
 #endif
 
 #endif
 
-#ifdef GOAMD64_v1
-#define SKIP_GOAMD64_CHECK
-#endif
-
-#ifndef GOAMD64_v1
-#ifndef GOAMD64_v2
-#ifndef GOAMD64_v3
-#ifndef GOAMD64_v4
-#define SKIP_GOAMD64_CHECK
-#endif
-#endif
-#endif
-#endif
-
 TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	// copy arguments forward on an even stack
 	MOVQ	DI, AX		// argc
 	MOVQ	SI, BX		// argv
-	SUBQ	$(4*8+7), SP		// 2args 2auto
+	SUBQ	$(5*8), SP		// 3args 2auto
 	ANDQ	$~15, SP
-	MOVQ	AX, 16(SP)
-	MOVQ	BX, 24(SP)
+	MOVQ	AX, 24(SP)
+	MOVQ	BX, 32(SP)
 
 	// create istack out of the given (operating system) stack.
 	// _cgo_init may update stackguard.
@@ -181,23 +178,8 @@ TEXT runtime·rt0_go(SB),NOSPLIT|TOPFRAME,$0
 	MOVL	$0, AX
 	CPUID
 	CMPL	AX, $0
-#ifdef SKIP_GOAMD64_CHECK
 	JE	nocpuinfo
-#else
-	JNE	has_cpuinfo
 
-bad_cpu: // show that the program requires a certain microarchitecture level.
-	MOVQ	$2, 0(SP)
-	MOVQ	$bad_cpu_msg<>(SB), AX
-	MOVQ	AX, 8(SP)
-	MOVQ	$84, 16(SP)
-	CALL	runtime·write(SB)
-	MOVQ	$1, 0(SP)
-	CALL	runtime·exit(SB)
-	CALL	runtime·abort(SB)
-#endif
-
-has_cpuinfo:
 	CMPL	BX, $0x756E6547  // "Genu"
 	JNE	notintel
 	CMPL	DX, $0x49656E69  // "ineI"
@@ -211,44 +193,6 @@ notintel:
 	MOVL	$1, AX
 	CPUID
 	MOVL	AX, runtime·processorVersionInfo(SB)
-
-#ifdef NEED_FEATURES_CX
-	ANDL	$NEED_FEATURES_CX, CX
-	CMPL	CX, $NEED_FEATURES_CX
-	JNE	bad_cpu
-#endif
-
-#ifdef NEED_MAX_CPUID
-	MOVL	$0x80000000, AX
-	CPUID
-	CMPL	AX, $NEED_MAX_CPUID
-	JL	bad_cpu
-#endif
-
-#ifdef NEED_EXT_FEATURES_BX
-	MOVL	$7, AX
-	MOVL	$0, CX
-	CPUID
-	ANDL	$NEED_EXT_FEATURES_BX, BX
-	CMPL	BX, $NEED_EXT_FEATURES_BX
-	JNE	bad_cpu
-#endif
-
-#ifdef NEED_EXT_FEATURES_CX
-	MOVL	$0x80000001, AX
-	CPUID
-	ANDL	$NEED_EXT_FEATURES_CX, CX
-	CMPL	CX, $NEED_EXT_FEATURES_CX
-	JNE	bad_cpu
-#endif
-
-#ifdef NEED_OS_SUPPORT_AX
-	XORL    CX, CX
-	XGETBV
-	ANDL	$NEED_OS_SUPPORT_AX, AX
-	CMPL	AX, $NEED_OS_SUPPORT_AX
-	JNE	bad_cpu
-#endif
 
 nocpuinfo:
 	// if there is an _cgo_init, call it.
@@ -330,11 +274,71 @@ ok:
 	MOVQ	AX, g_m(CX)
 
 	CLD				// convention is D is always left cleared
+
+	// Check GOAMD64 reqirements
+	// We need to do this after setting up TLS, so that
+	// we can report an error if there is a failure. See issue 49586.
+#ifdef NEED_FEATURES_CX
+	MOVL	$0, AX
+	CPUID
+	CMPL	AX, $0
+	JE	bad_cpu
+	MOVL	$1, AX
+	CPUID
+	ANDL	$NEED_FEATURES_CX, CX
+	CMPL	CX, $NEED_FEATURES_CX
+	JNE	bad_cpu
+#endif
+
+#ifdef NEED_MAX_CPUID
+	MOVL	$0x80000000, AX
+	CPUID
+	CMPL	AX, $NEED_MAX_CPUID
+	JL	bad_cpu
+#endif
+
+#ifdef NEED_EXT_FEATURES_BX
+	MOVL	$7, AX
+	MOVL	$0, CX
+	CPUID
+	ANDL	$NEED_EXT_FEATURES_BX, BX
+	CMPL	BX, $NEED_EXT_FEATURES_BX
+	JNE	bad_cpu
+#endif
+
+#ifdef NEED_EXT_FEATURES_CX
+	MOVL	$0x80000001, AX
+	CPUID
+	ANDL	$NEED_EXT_FEATURES_CX, CX
+	CMPL	CX, $NEED_EXT_FEATURES_CX
+	JNE	bad_cpu
+#endif
+
+#ifdef NEED_OS_SUPPORT_AX
+	XORL    CX, CX
+	XGETBV
+	ANDL	$NEED_OS_SUPPORT_AX, AX
+	CMPL	AX, $NEED_OS_SUPPORT_AX
+	JNE	bad_cpu
+#endif
+
+#ifdef NEED_DARWIN_SUPPORT
+	MOVQ	$commpage64_version, BX
+	CMPW	(BX), $13  // cpu_capabilities64 undefined in versions < 13
+	JL	bad_cpu
+	MOVQ	$commpage64_cpu_capabilities64, BX
+	MOVQ	(BX), BX
+	MOVQ	$NEED_DARWIN_SUPPORT, CX
+	ANDQ	CX, BX
+	CMPQ	BX, CX
+	JNE	bad_cpu
+#endif
+
 	CALL	runtime·check(SB)
 
-	MOVL	16(SP), AX		// copy argc
+	MOVL	24(SP), AX		// copy argc
 	MOVL	AX, 0(SP)
-	MOVQ	24(SP), AX		// copy argv
+	MOVQ	32(SP), AX		// copy argv
 	MOVQ	AX, 8(SP)
 	CALL	runtime·args(SB)
 	CALL	runtime·osinit(SB)
@@ -350,6 +354,17 @@ ok:
 	CALL	runtime·mstart(SB)
 
 	CALL	runtime·abort(SB)	// mstart should never return
+	RET
+
+bad_cpu: // show that the program requires a certain microarchitecture level.
+	MOVQ	$2, 0(SP)
+	MOVQ	$bad_cpu_msg<>(SB), AX
+	MOVQ	AX, 8(SP)
+	MOVQ	$84, 16(SP)
+	CALL	runtime·write(SB)
+	MOVQ	$1, 0(SP)
+	CALL	runtime·exit(SB)
+	CALL	runtime·abort(SB)
 	RET
 
 	// Prevent dead-code elimination of debugCallV2, which is
@@ -1760,7 +1775,7 @@ GLOBL	debugCallFrameTooLarge<>(SB), RODATA, $20	// Size duplicated below
 // 2. Push the current PC on the stack (updating SP).
 // 3. Write the desired argument frame size at SP-16 (using the SP
 //    after step 2).
-// 4. Save all machine registers (including flags and XMM reigsters)
+// 4. Save all machine registers (including flags and XMM registers)
 //    so they can be restored later by the debugger.
 // 5. Set the PC to debugCallV2 and resume execution.
 //

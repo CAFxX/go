@@ -6,6 +6,7 @@ package types2_test
 
 import (
 	"cmd/compile/internal/syntax"
+	"internal/testenv"
 	"path"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,8 @@ import (
 )
 
 func TestSelf(t *testing.T) {
+	testenv.MustHaveGoBuild(t) // The Go command is needed for the importer to determine the locations of stdlib .a files.
+
 	files, err := pkgFiles(".")
 	if err != nil {
 		t.Fatal(err)
@@ -29,10 +32,13 @@ func TestSelf(t *testing.T) {
 }
 
 func BenchmarkCheck(b *testing.B) {
+	testenv.MustHaveGoBuild(b) // The Go command is needed for the importer to determine the locations of stdlib .a files.
+
 	for _, p := range []string{
 		filepath.Join("src", "net", "http"),
 		filepath.Join("src", "go", "parser"),
 		filepath.Join("src", "go", "constant"),
+		filepath.Join("src", "runtime"),
 		filepath.Join("src", "go", "internal", "gcimporter"),
 	} {
 		b.Run(path.Base(p), func(b *testing.B) {

@@ -99,16 +99,12 @@ func ResolveUDPAddr(network, address string) (*UDPAddr, error) {
 	return addrs.forResolve(network, address).(*UDPAddr), nil
 }
 
-// UDPAddrFromAddrPort returns addr as a UDPAddr.
-//
-// If addr is not valid, it returns nil.
+// UDPAddrFromAddrPort returns addr as a UDPAddr. If addr.IsValid() is false,
+// then the returned UDPAddr will contain a nil IP field, indicating an
+// address family-agnostic unspecified address.
 func UDPAddrFromAddrPort(addr netip.AddrPort) *UDPAddr {
-	if !addr.IsValid() {
-		return nil
-	}
-	ip16 := addr.Addr().As16()
 	return &UDPAddr{
-		IP:   IP(ip16[:]),
+		IP:   addr.Addr().AsSlice(),
 		Zone: addr.Addr().Zone(),
 		Port: int(addr.Port()),
 	}
@@ -168,6 +164,10 @@ func (c *UDPConn) ReadFrom(b []byte) (int, Addr, error) {
 }
 
 // ReadFromUDPAddrPort acts like ReadFrom but returns a netip.AddrPort.
+//
+// If c is bound to an unspecified address, the returned
+// netip.AddrPort's address might be an IPv4-mapped IPv6 address.
+// Use netip.Addr.Unmap to get the address without the IPv6 prefix.
 func (c *UDPConn) ReadFromUDPAddrPort(b []byte) (n int, addr netip.AddrPort, err error) {
 	if !c.ok() {
 		return 0, netip.AddrPort{}, syscall.EINVAL
@@ -189,7 +189,9 @@ func (c *UDPConn) ReadFromUDPAddrPort(b []byte) (n int, addr netip.AddrPort, err
 func (c *UDPConn) ReadMsgUDP(b, oob []byte) (n, oobn, flags int, addr *UDPAddr, err error) {
 	var ap netip.AddrPort
 	n, oobn, flags, ap, err = c.ReadMsgUDPAddrPort(b, oob)
-	addr = UDPAddrFromAddrPort(ap)
+	if ap.IsValid() {
+		addr = UDPAddrFromAddrPort(ap)
+	}
 	return
 }
 

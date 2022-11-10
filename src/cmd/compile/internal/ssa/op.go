@@ -16,7 +16,7 @@ import (
 // An Op encodes the specific operation that a Value performs.
 // Opcodes' semantics can be modified by the type and aux fields of the Value.
 // For instance, OpAdd can be 32 or 64 bit, signed or unsigned, float or complex, depending on Value.Type.
-// Semantics of each op are described in the opcode files in gen/*Ops.go.
+// Semantics of each op are described in the opcode files in _gen/*Ops.go.
 // There is one file for generic (architecture-independent) ops and one file
 // for each architecture.
 type Op int32
@@ -391,9 +391,9 @@ const (
 
 // A Sym represents a symbolic offset from a base register.
 // Currently a Sym can be one of 3 things:
-//  - a *gc.Node, for an offset from SP (the stack pointer)
-//  - a *obj.LSym, for an offset from SB (the global pointer)
-//  - nil, for no offset
+//   - a *gc.Node, for an offset from SP (the stack pointer)
+//   - a *obj.LSym, for an offset from SB (the global pointer)
+//   - nil, for no offset
 type Sym interface {
 	CanBeAnSSASym()
 	CanBeAnSSAAux()
@@ -478,13 +478,14 @@ const (
 	BoundsKindCount
 )
 
-// boundsAPI determines which register arguments a bounds check call should use. For an [a:b:c] slice, we do:
-//   CMPQ c, cap
-//   JA   fail1
-//   CMPQ b, c
-//   JA   fail2
-//   CMPQ a, b
-//   JA   fail3
+// boundsABI determines which register arguments a bounds check call should use. For an [a:b:c] slice, we do:
+//
+//	CMPQ c, cap
+//	JA   fail1
+//	CMPQ b, c
+//	JA   fail2
+//	CMPQ a, b
+//	JA   fail3
 //
 // fail1: CALL panicSlice3Acap (c, cap)
 // fail2: CALL panicSlice3B (b, c)

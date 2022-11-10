@@ -12,10 +12,28 @@ import (
 
 // cbs stores all registered Go callbacks.
 var cbs struct {
-	lock  mutex
+	lock  mutex // use cbsLock / cbsUnlock for race instrumentation.
 	ctxt  [cb_max]winCallback
 	index map[winCallbackKey]int
 	n     int
+}
+
+func cbsLock() {
+	lock(&cbs.lock)
+	// compileCallback is used by goenvs prior to completion of schedinit.
+	// raceacquire involves a racecallback to get the proc, which is not
+	// safe prior to scheduler initialization. Thus avoid instrumentation
+	// until then.
+	if raceenabled && mainStarted {
+		raceacquire(unsafe.Pointer(&cbs.lock))
+	}
+}
+
+func cbsUnlock() {
+	if raceenabled && mainStarted {
+		racerelease(unsafe.Pointer(&cbs.lock))
+	}
+	unlock(&cbs.lock)
 }
 
 // winCallback records information about a registered Go callback.
@@ -152,7 +170,7 @@ func (p *abiDesc) assignArg(t *_type) {
 // tryRegAssignArg tries to register-assign a value of type t.
 // If this type is nested in an aggregate type, then offset is the
 // offset of this type within its parent type.
-// Assumes t.size <= sys.PtrSize and t.size != 0.
+// Assumes t.size <= goarch.PtrSize and t.size != 0.
 //
 // Returns whether the assignment succeeded.
 func (p *abiDesc) tryRegAssignArg(t *_type, offset uintptr) bool {
@@ -174,7 +192,7 @@ func (p *abiDesc) tryRegAssignArg(t *_type, offset uintptr) bool {
 		st := (*structtype)(unsafe.Pointer(t))
 		for i := range st.fields {
 			f := &st.fields[i]
-			if !p.tryRegAssignArg(f.typ, offset+f.offset()) {
+			if !p.tryRegAssignArg(f.typ, offset+f.offset) {
 				return false
 			}
 		}
@@ -302,11 +320,11 @@ func compileCallback(fn eface, cdecl bool) (code uintptr) {
 
 	key := winCallbackKey{(*funcval)(fn.data), cdecl}
 
-	lock(&cbs.lock) // We don't unlock this in a defer because this is used from the system stack.
+	cbsLock()
 
 	// Check if this callback is already registered.
 	if n, ok := cbs.index[key]; ok {
-		unlock(&cbs.lock)
+		cbsUnlock()
 		return callbackasmAddr(n)
 	}
 
@@ -316,7 +334,7 @@ func compileCallback(fn eface, cdecl bool) (code uintptr) {
 	}
 	n := cbs.n
 	if n >= len(cbs.ctxt) {
-		unlock(&cbs.lock)
+		cbsUnlock()
 		throw("too many callback functions")
 	}
 	c := winCallback{key.fn, retPop, abiMap}
@@ -324,7 +342,7 @@ func compileCallback(fn eface, cdecl bool) (code uintptr) {
 	cbs.index[key] = n
 	cbs.n++
 
-	unlock(&cbs.lock)
+	cbsUnlock()
 	return callbackasmAddr(n)
 }
 
@@ -399,6 +417,7 @@ const _LOAD_LIBRARY_SEARCH_SYSTEM32 = 0x00000800
 // parameter and the important SEARCH_SYSTEM32 argument. But on systems that
 // do not have that option, absoluteFilepath should contain a fallback
 // to the full path inside of system32 for use with vanilla LoadLibrary.
+//
 //go:linkname syscall_loadsystemlibrary syscall.loadsystemlibrary
 //go:nosplit
 //go:cgo_unsafe_args
@@ -422,6 +441,8 @@ func syscall_loadsystemlibrary(filename *uint16, absoluteFilepath *uint16) (hand
 	}
 
 	cgocall(asmstdcallAddr, unsafe.Pointer(c))
+	KeepAlive(filename)
+	KeepAlive(absoluteFilepath)
 	handle = c.r1
 	if handle == 0 {
 		err = c.err
@@ -441,6 +462,7 @@ func syscall_loadlibrary(filename *uint16) (handle, err uintptr) {
 	c.n = 1
 	c.args = uintptr(noescape(unsafe.Pointer(&filename)))
 	cgocall(asmstdcallAddr, unsafe.Pointer(c))
+	KeepAlive(filename)
 	handle = c.r1
 	if handle == 0 {
 		err = c.err
@@ -459,6 +481,7 @@ func syscall_getprocaddress(handle uintptr, procname *byte) (outhandle, err uint
 	c.n = 2
 	c.args = uintptr(noescape(unsafe.Pointer(&handle)))
 	cgocall(asmstdcallAddr, unsafe.Pointer(c))
+	KeepAlive(procname)
 	outhandle = c.r1
 	if outhandle == 0 {
 		err = c.err

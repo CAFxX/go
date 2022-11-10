@@ -18,11 +18,12 @@ func usage() {
 	os.Exit(2)
 }
 
+var wflag = flag.Bool("w", false, "write build ID")
+
 func Main() {
 	log.SetPrefix("buildid: ")
 	log.SetFlags(0)
 	flag.Usage = usage
-	var wflag = flag.Bool("w", false, "write build ID")
 	flag.Parse()
 	if flag.NArg() != 1 {
 		usage()
@@ -48,6 +49,11 @@ func Main() {
 	f.Close()
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// <= go 1.7 doesn't embed the contentID or actionID, so no slash is present
+	if !strings.Contains(id, "/") {
+		log.Fatalf("%s: build ID is a legacy format...binary too old for this tool", file)
 	}
 
 	newID := id[:strings.LastIndex(id, "/")] + "/" + HashToString(hash)

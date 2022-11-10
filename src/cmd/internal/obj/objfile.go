@@ -10,9 +10,9 @@ import (
 	"bytes"
 	"cmd/internal/bio"
 	"cmd/internal/goobj"
+	"cmd/internal/notsha256"
 	"cmd/internal/objabi"
 	"cmd/internal/sys"
-	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -22,6 +22,8 @@ import (
 	"sort"
 	"strings"
 )
+
+const UnlinkablePkg = "<unlinkable>" // invalid package path, used when compiled without -p flag
 
 // Entry point of writing new object file.
 func WriteObjFile(ctxt *Link, b *bio.Writer) {
@@ -45,8 +47,11 @@ func WriteObjFile(ctxt *Link, b *bio.Writer) {
 	if ctxt.Flag_shared {
 		flags |= goobj.ObjFlagShared
 	}
+	if w.pkgpath == UnlinkablePkg {
+		flags |= goobj.ObjFlagUnlinkable
+	}
 	if w.pkgpath == "" {
-		flags |= goobj.ObjFlagNeedNameExpansion
+		log.Fatal("empty package path")
 	}
 	if ctxt.IsAsm {
 		flags |= goobj.ObjFlagFromAssembly
@@ -168,6 +173,7 @@ func WriteObjFile(ctxt *Link, b *bio.Writer) {
 	h.Offsets[goobj.BlkReloc] = w.Offset()
 	for _, list := range lists {
 		for _, s := range list {
+			sort.Sort(relocByOff(s.R)) // some platforms (e.g. PE) requires relocations in address order
 			for i := range s.R {
 				w.Reloc(&s.R[i])
 			}
@@ -263,16 +269,20 @@ func (w *writer) StringTable() {
 		w.AddString(pkg)
 	}
 	w.ctxt.traverseSyms(traverseAll, func(s *LSym) {
-		// TODO: this includes references of indexed symbols from other packages,
-		// for which the linker doesn't need the name. Consider moving them to
-		// a separate block (for tools only).
-		if w.pkgpath != "" {
-			s.Name = strings.Replace(s.Name, "\"\".", w.pkgpath+".", -1)
-		}
 		// Don't put names of builtins into the string table (to save
 		// space).
 		if s.PkgIdx == goobj.PkgIdxBuiltin {
 			return
+		}
+		// TODO: this includes references of indexed symbols from other packages,
+		// for which the linker doesn't need the name. Consider moving them to
+		// a separate block (for tools only).
+		if w.ctxt.Flag_noRefName && s.PkgIdx < goobj.PkgIdxSpecial {
+			// Don't include them if Flag_noRefName
+			return
+		}
+		if w.pkgpath != "" {
+			s.Name = strings.Replace(s.Name, "\"\".", w.pkgpath+".", -1)
 		}
 		w.AddString(s.Name)
 	})
@@ -311,14 +321,14 @@ func (w *writer) Sym(s *LSym) {
 	if s.ReflectMethod() {
 		flag |= goobj.SymFlagReflectMethod
 	}
-	if strings.HasPrefix(s.Name, "type.") && s.Name[5] != '.' && s.Type == objabi.SRODATA {
+	if strings.HasPrefix(s.Name, "type:") && s.Name[5] != '.' && s.Type == objabi.SRODATA {
 		flag |= goobj.SymFlagGoType
 	}
 	flag2 := uint8(0)
 	if s.UsedInIface() {
 		flag2 |= goobj.SymFlagUsedInIface
 	}
-	if strings.HasPrefix(s.Name, "go.itab.") && s.Type == objabi.SRODATA {
+	if strings.HasPrefix(s.Name, "go:itab.") && s.Type == objabi.SRODATA {
 		flag2 |= goobj.SymFlagItab
 	}
 	if strings.HasPrefix(s.Name, w.ctxt.Pkgpath) && strings.HasPrefix(s.Name[len(w.ctxt.Pkgpath):], ".") && strings.HasPrefix(s.Name[len(w.ctxt.Pkgpath)+1:], objabi.GlobalDictPrefix) {
@@ -341,10 +351,9 @@ func (w *writer) Sym(s *LSym) {
 		// TODO: maybe the compiler could set the alignment for all
 		// data symbols more carefully.
 		switch {
-		case strings.HasPrefix(s.Name, "go.string."),
-			strings.HasPrefix(name, "type..namedata."),
-			strings.HasPrefix(name, "type..importpath."),
-			strings.HasPrefix(name, "runtime.gcbits."),
+		case strings.HasPrefix(s.Name, "go:string."),
+			strings.HasPrefix(name, "type:.namedata."),
+			strings.HasPrefix(name, "type:.importpath."),
 			strings.HasSuffix(name, ".opendefer"),
 			strings.HasSuffix(name, ".arginfo0"),
 			strings.HasSuffix(name, ".arginfo1"),
@@ -417,11 +426,12 @@ func contentHashSection(s *LSym) byte {
 		strings.HasSuffix(name, ".arginfo0") ||
 		strings.HasSuffix(name, ".arginfo1") ||
 		strings.HasSuffix(name, ".argliveinfo") ||
+		strings.HasSuffix(name, ".wrapinfo") ||
 		strings.HasSuffix(name, ".args_stackmap") ||
 		strings.HasSuffix(name, ".stkobj") {
-		return 'F' // go.func.* or go.funcrel.*
+		return 'F' // go:func.* or go:funcrel.*
 	}
-	if strings.HasPrefix(name, "type.") {
+	if strings.HasPrefix(name, "type:") {
 		return 'T'
 	}
 	return 0
@@ -441,19 +451,19 @@ func contentHash64(s *LSym) goobj.Hash64Type {
 // Depending on the category of the referenced symbol, we choose
 // different hash algorithms such that the hash is globally
 // consistent.
-// - For referenced content-addressable symbol, its content hash
-//   is globally consistent.
-// - For package symbol and builtin symbol, its local index is
-//   globally consistent.
-// - For non-package symbol, its fully-expanded name is globally
-//   consistent. For now, we require we know the current package
-//   path so we can always expand symbol names. (Otherwise,
-//   symbols with relocations are not considered hashable.)
+//   - For referenced content-addressable symbol, its content hash
+//     is globally consistent.
+//   - For package symbol and builtin symbol, its local index is
+//     globally consistent.
+//   - For non-package symbol, its fully-expanded name is globally
+//     consistent. For now, we require we know the current package
+//     path so we can always expand symbol names. (Otherwise,
+//     symbols with relocations are not considered hashable.)
 //
 // For now, we assume there is no circular dependencies among
 // hashed symbols.
 func (w *writer) contentHash(s *LSym) goobj.HashType {
-	h := sha1.New()
+	h := notsha256.New()
 	var tmp [14]byte
 
 	// Include the size of the symbol in the hash.
@@ -618,6 +628,9 @@ func (w *writer) refFlags() {
 // Emits names of referenced indexed symbols, used by tools (objdump, nm)
 // only.
 func (w *writer) refNames() {
+	if w.ctxt.Flag_noRefName {
+		return
+	}
 	seen := make(map[*LSym]bool)
 	w.ctxt.traverseSyms(traverseRefs, func(rs *LSym) { // only traverse refs, not auxs, as tools don't need auxs
 		switch rs.PkgIdx {
@@ -684,7 +697,6 @@ func nAuxSym(s *LSym) int {
 // generate symbols for FuncInfo.
 func genFuncInfoSyms(ctxt *Link) {
 	infosyms := make([]*LSym, 0, len(ctxt.Text))
-	hashedsyms := make([]*LSym, 0, 4*len(ctxt.Text))
 	var b bytes.Buffer
 	symidx := int32(len(ctxt.defs))
 	for _, s := range ctxt.Text {
@@ -693,10 +705,11 @@ func genFuncInfoSyms(ctxt *Link) {
 			continue
 		}
 		o := goobj.FuncInfo{
-			Args:     uint32(fn.Args),
-			Locals:   uint32(fn.Locals),
-			FuncID:   fn.FuncID,
-			FuncFlag: fn.FuncFlag,
+			Args:      uint32(fn.Args),
+			Locals:    uint32(fn.Locals),
+			FuncID:    fn.FuncID,
+			FuncFlag:  fn.FuncFlag,
+			StartLine: fn.StartLine,
 		}
 		pc := &fn.Pcln
 		i := 0
@@ -708,7 +721,7 @@ func genFuncInfoSyms(ctxt *Link) {
 		sort.Slice(o.File, func(i, j int) bool { return o.File[i] < o.File[j] })
 		o.InlTree = make([]goobj.InlTreeNode, len(pc.InlTree.nodes))
 		for i, inl := range pc.InlTree.nodes {
-			f, l := getFileIndexAndLine(ctxt, inl.Pos)
+			f, l := ctxt.getFileIndexAndLine(inl.Pos)
 			o.InlTree[i] = goobj.InlTreeNode{
 				Parent:   int32(inl.Parent),
 				File:     goobj.CUFileIndex(f),
@@ -719,11 +732,13 @@ func genFuncInfoSyms(ctxt *Link) {
 		}
 
 		o.Write(&b)
+		p := b.Bytes()
 		isym := &LSym{
 			Type:   objabi.SDATA, // for now, I don't think it matters
 			PkgIdx: goobj.PkgIdxSelf,
 			SymIdx: symidx,
-			P:      append([]byte(nil), b.Bytes()...),
+			P:      append([]byte(nil), p...),
+			Size:   int64(len(p)),
 		}
 		isym.Set(AttrIndexed, true)
 		symidx++
@@ -744,7 +759,6 @@ func genFuncInfoSyms(ctxt *Link) {
 		}
 	}
 	ctxt.defs = append(ctxt.defs, infosyms...)
-	ctxt.hasheddefs = append(ctxt.hasheddefs, hashedsyms...)
 }
 
 func writeAuxSymDebug(ctxt *Link, par *LSym, aux *LSym) {

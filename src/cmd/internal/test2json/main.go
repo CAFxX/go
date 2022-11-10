@@ -26,7 +26,7 @@
 // binary's output. To convert the output of a "go test" command,
 // use "go test -json" instead of invoking test2json directly.
 //
-// Output Format
+// # Output Format
 //
 // The JSON stream is a newline-separated sequence of TestEvent objects
 // corresponding to the Go struct:
@@ -80,15 +80,20 @@
 // as a sequence of events with Test set to the benchmark name, terminated
 // by a final event with Action == "bench" or "fail".
 // Benchmarks have no events with Action == "run", "pause", or "cont".
-//
 package test2json
 
 import (
 	"flag"
 	"fmt"
-	exec "internal/execabs"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
+)
+
+var (
+	flagP = flag.String("p", "", "report `pkg` as the package being tested in each event")
+	flagT = flag.Bool("t", false, "include timestamps in events")
 )
 
 func usage() {
@@ -96,11 +101,12 @@ func usage() {
 	os.Exit(2)
 }
 
+// ignoreSignals ignore the interrupt signals.
+func ignoreSignals() {
+	signal.Ignore(signalsToIgnore...)
+}
+
 func Main() {
-	var (
-		flagP = flag.String("p", "", "report `pkg` as the package being tested in each event")
-		flagT = flag.Bool("t", false, "include timestamps in events")
-	)
 	flag.Usage = usage
 	flag.Parse()
 
@@ -119,6 +125,7 @@ func Main() {
 		w := &countWriter{0, c}
 		cmd.Stdout = w
 		cmd.Stderr = w
+		ignoreSignals()
 		err := cmd.Run()
 		if err != nil {
 			if w.n > 0 {

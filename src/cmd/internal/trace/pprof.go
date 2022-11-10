@@ -9,11 +9,11 @@ package trace
 import (
 	"bufio"
 	"fmt"
-	exec "internal/execabs"
 	"internal/trace"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"

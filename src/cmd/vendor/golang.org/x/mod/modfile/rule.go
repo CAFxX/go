@@ -513,6 +513,9 @@ func parseReplace(filename string, line *Line, verb string, args []string, fix V
 	nv := ""
 	if len(args) == arrow+2 {
 		if !IsDirectoryPath(ns) {
+			if strings.Contains(ns, "@") {
+				return nil, errorf("replacement module must match format 'path version', not 'path@version'")
+			}
 			return nil, errorf("replacement module without version must be directory path (rooted or starting with ./ or ../)")
 		}
 		if filepath.Separator == '/' && strings.Contains(ns, `\`) {
@@ -609,7 +612,7 @@ func (f *WorkFile) add(errs *ErrorList, line *Line, verb string, args []string, 
 		f.Go = &Go{Syntax: line}
 		f.Go.Version = args[0]
 
-	case "directory":
+	case "use":
 		if len(args) != 1 {
 			errorf("usage: %s local/dir", verb)
 			return
@@ -619,7 +622,7 @@ func (f *WorkFile) add(errs *ErrorList, line *Line, verb string, args []string, 
 			errorf("invalid quoted string: %v", err)
 			return
 		}
-		f.Directory = append(f.Directory, &Directory{
+		f.Use = append(f.Use, &Use{
 			Path:   s,
 			Syntax: line,
 		})

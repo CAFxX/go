@@ -13,12 +13,16 @@ cd src
 go env GOWORK
 stdout 'go.work'
 
+env GOWORK='off'
+go env GOWORK
+stdout 'off'
+
 ! go env -w GOWORK=off
 stderr '^go: GOWORK cannot be modified$'
 
 -- go.work --
 go 1.18
 
-directory a
+use a
 -- a/go.mod --
 module example.com/a

@@ -42,29 +42,29 @@ var typedefs = [...]struct {
 
 func InitTypes(defTypeName func(sym *Sym, typ *Type) Object) {
 	if PtrSize == 0 {
-		base.Fatalf("typeinit before betypeinit")
+		base.Fatalf("InitTypes called before PtrSize was set")
 	}
 
 	SlicePtrOffset = 0
-	SliceLenOffset = Rnd(SlicePtrOffset+int64(PtrSize), int64(PtrSize))
-	SliceCapOffset = Rnd(SliceLenOffset+int64(PtrSize), int64(PtrSize))
-	SliceSize = Rnd(SliceCapOffset+int64(PtrSize), int64(PtrSize))
+	SliceLenOffset = RoundUp(SlicePtrOffset+int64(PtrSize), int64(PtrSize))
+	SliceCapOffset = RoundUp(SliceLenOffset+int64(PtrSize), int64(PtrSize))
+	SliceSize = RoundUp(SliceCapOffset+int64(PtrSize), int64(PtrSize))
 
 	// string is same as slice wo the cap
-	StringSize = Rnd(SliceLenOffset+int64(PtrSize), int64(PtrSize))
+	StringSize = RoundUp(SliceLenOffset+int64(PtrSize), int64(PtrSize))
 
 	for et := Kind(0); et < NTYPE; et++ {
 		SimType[et] = et
 	}
 
-	Types[TANY] = newType(TANY)
+	Types[TANY] = newType(TANY) // note: an old placeholder type, NOT the new builtin 'any' alias for interface{}
 	Types[TINTER] = NewInterface(LocalPkg, nil, false)
+	CheckSize(Types[TINTER])
 
 	defBasic := func(kind Kind, pkg *Pkg, name string) *Type {
 		typ := newType(kind)
 		obj := defTypeName(pkg.Lookup(name), typ)
-		typ.sym = obj.Sym()
-		typ.nod = obj
+		typ.obj = obj
 		if kind != TANY {
 			CheckSize(typ)
 		}
@@ -90,6 +90,7 @@ func InitTypes(defTypeName func(sym *Sym, typ *Type) Object) {
 	// int32  Hence, (bytetype|runtype).Sym.isAlias() is false.
 	// TODO(gri) Should we get rid of this special case (at the cost
 	// of less informative error messages involving bytes and runes)?
+	// NOTE(rsc): No, the error message quality is important.
 	// (Alternatively, we could introduce an OTALIAS node representing
 	// type aliases, albeit at the cost of having to deal with it everywhere).
 	ByteType = defBasic(TUINT8, BuiltinPkg, "byte")
@@ -108,12 +109,10 @@ func InitTypes(defTypeName func(sym *Sym, typ *Type) Object) {
 	ResumeCheckSize()
 
 	// any type (interface)
-	if base.Flag.G > 0 {
-		DeferCheckSize()
-		AnyType = defBasic(TFORW, BuiltinPkg, "any")
-		AnyType.SetUnderlying(NewInterface(NoPkg, []*Field{}, false))
-		ResumeCheckSize()
-	}
+	DeferCheckSize()
+	AnyType = defBasic(TFORW, BuiltinPkg, "any")
+	AnyType.SetUnderlying(NewInterface(BuiltinPkg, []*Field{}, false))
+	ResumeCheckSize()
 
 	Types[TUNSAFEPTR] = defBasic(TUNSAFEPTR, UnsafePkg, "Pointer")
 
@@ -148,8 +147,8 @@ func makeErrorInterface() *Type {
 	return NewInterface(NoPkg, []*Field{method}, false)
 }
 
+// makeComparableInterface makes the predefined "comparable" interface in the
+// built-in package. It has a unique name, but no methods.
 func makeComparableInterface() *Type {
-	sig := NewSignature(NoPkg, FakeRecv(), nil, nil, nil)
-	method := NewField(src.NoXPos, LocalPkg.Lookup("=="), sig)
-	return NewInterface(NoPkg, []*Field{method}, false)
+	return NewInterface(NoPkg, nil, false)
 }

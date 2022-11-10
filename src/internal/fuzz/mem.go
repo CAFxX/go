@@ -5,8 +5,8 @@
 package fuzz
 
 import (
+	"bytes"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"unsafe"
 )
@@ -41,11 +41,17 @@ type sharedMemHeader struct {
 	// May be reset by coordinator.
 	count int64
 
-	// valueLen is the length of the value that was last fuzzed.
+	// valueLen is the number of bytes in region which should be read.
 	valueLen int
 
 	// randState and randInc hold the state of a pseudo-random number generator.
 	randState, randInc uint64
+
+	// rawInMem is true if the region holds raw bytes, which occurs during
+	// minimization. If true after the worker fails during minimization, this
+	// indicates that an unrecoverable error occurred, and the region can be
+	// used to retrieve the raw bytes that caused the error.
+	rawInMem bool
 }
 
 // sharedMemSize returns the size needed for a shared memory buffer that can
@@ -59,7 +65,7 @@ func sharedMemSize(valueSize int) int {
 // it into memory. The file will be removed when the Close method is called.
 func sharedMemTempFile(size int) (m *sharedMem, err error) {
 	// Create a temporary file.
-	f, err := ioutil.TempFile("", "fuzz-*")
+	f, err := os.CreateTemp("", "fuzz-*")
 	if err != nil {
 		return nil, err
 	}
@@ -97,9 +103,7 @@ func (m *sharedMem) valueRef() []byte {
 // valueCopy returns a copy of the value stored in shared memory.
 func (m *sharedMem) valueCopy() []byte {
 	ref := m.valueRef()
-	b := make([]byte, len(ref))
-	copy(b, ref)
-	return b
+	return bytes.Clone(ref)
 }
 
 // setValue copies the data in b into the shared memory buffer and sets

@@ -258,7 +258,7 @@ type RegAmounts struct {
 // by the ABI rules for parameter passing and result returning.
 type ABIConfig struct {
 	// Do we need anything more than this?
-	offsetForLocals  int64 // e.g., obj.(*Link).FixedFrameSize() -- extra linkage information on some architectures.
+	offsetForLocals  int64 // e.g., obj.(*Link).Arch.FixedFrameSize -- extra linkage information on some architectures.
 	regAmounts       RegAmounts
 	regsForTypeCache map[*types.Type]int
 }
@@ -359,7 +359,7 @@ func (config *ABIConfig) ABIAnalyzeTypes(rcvr *types.Type, ins, outs []*types.Ty
 		result.inparams = append(result.inparams,
 			s.assignParamOrReturn(t, nil, false))
 	}
-	s.stackOffset = types.Rnd(s.stackOffset, int64(types.RegSize))
+	s.stackOffset = types.RoundUp(s.stackOffset, int64(types.RegSize))
 	result.inRegistersUsed = s.rUsed.intRegs + s.rUsed.floatRegs
 
 	// Outputs
@@ -403,7 +403,7 @@ func (config *ABIConfig) ABIAnalyzeFuncType(ft *types.Func) *ABIParamResultInfo 
 		result.inparams = append(result.inparams,
 			s.assignParamOrReturn(f.Type, f.Nname, false))
 	}
-	s.stackOffset = types.Rnd(s.stackOffset, int64(types.RegSize))
+	s.stackOffset = types.RoundUp(s.stackOffset, int64(types.RegSize))
 	result.inRegistersUsed = s.rUsed.intRegs + s.rUsed.floatRegs
 
 	// Outputs
@@ -539,7 +539,7 @@ func alignTo(a int64, t int) int64 {
 	if t == 0 {
 		return a
 	}
-	return types.Rnd(a, int64(t))
+	return types.RoundUp(a, int64(t))
 }
 
 // stackSlot returns a stack offset for a param or result of the
@@ -647,7 +647,7 @@ func (state *assignState) floatUsed() int {
 // can register allocate, FALSE otherwise (and updates state
 // accordingly).
 func (state *assignState) regassignIntegral(t *types.Type) bool {
-	regsNeeded := int(types.Rnd(t.Size(), int64(types.PtrSize)) / int64(types.PtrSize))
+	regsNeeded := int(types.RoundUp(t.Size(), int64(types.PtrSize)) / int64(types.PtrSize))
 	if t.IsComplex() {
 		regsNeeded = 2
 	}
@@ -715,19 +715,20 @@ func setup() {
 	synthOnce.Do(func() {
 		fname := types.BuiltinPkg.Lookup
 		nxp := src.NoXPos
-		unsp := types.Types[types.TUNSAFEPTR]
-		ui := types.Types[types.TUINTPTR]
+		bp := types.NewPtr(types.Types[types.TUINT8])
+		it := types.Types[types.TINT]
 		synthSlice = types.NewStruct(types.NoPkg, []*types.Field{
-			types.NewField(nxp, fname("ptr"), unsp),
-			types.NewField(nxp, fname("len"), ui),
-			types.NewField(nxp, fname("cap"), ui),
+			types.NewField(nxp, fname("ptr"), bp),
+			types.NewField(nxp, fname("len"), it),
+			types.NewField(nxp, fname("cap"), it),
 		})
 		types.CalcStructSize(synthSlice)
 		synthString = types.NewStruct(types.NoPkg, []*types.Field{
-			types.NewField(nxp, fname("data"), unsp),
-			types.NewField(nxp, fname("len"), ui),
+			types.NewField(nxp, fname("data"), bp),
+			types.NewField(nxp, fname("len"), it),
 		})
 		types.CalcStructSize(synthString)
+		unsp := types.Types[types.TUNSAFEPTR]
 		synthIface = types.NewStruct(types.NoPkg, []*types.Field{
 			types.NewField(nxp, fname("f1"), unsp),
 			types.NewField(nxp, fname("f2"), unsp),
@@ -787,12 +788,12 @@ func (state *assignState) assignParamOrReturn(pt *types.Type, n types.Object, is
 // field. For things that are not structs (or structs without padding)
 // it returns a list of zeros. Example:
 //
-// type small struct {
-//   x uint16
-//   y uint8
-//   z int32
-//   w int32
-// }
+//	type small struct {
+//		x uint16
+//		y uint8
+//		z int32
+//		w int32
+//	}
 //
 // For this struct we would return a list [0, 1, 0, 0], meaning that
 // we have one byte of padding after the second field, and no bytes of

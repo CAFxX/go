@@ -31,7 +31,7 @@ import (
 )
 
 var cmdVendor = &base.Command{
-	UsageLine: "go mod vendor [-e] [-v]",
+	UsageLine: "go mod vendor [-e] [-v] [-o outdir]",
 	Short:     "make vendored copy of dependencies",
 	Long: `
 Vendor resets the main module's vendor directory to include all packages
@@ -44,16 +44,24 @@ modules and packages to standard error.
 The -e flag causes vendor to attempt to proceed despite errors
 encountered while loading packages.
 
+The -o flag causes vendor to create the vendor directory at the given
+path instead of "vendor". The go command can only use a vendor directory
+named "vendor" within the module root directory, so this flag is
+primarily useful for other tools.
+
 See https://golang.org/ref/mod#go-mod-vendor for more about 'go mod vendor'.
 	`,
 	Run: runVendor,
 }
 
-var vendorE bool // if true, report errors but proceed anyway
+var vendorE bool   // if true, report errors but proceed anyway
+var vendorO string // if set, overrides the default output directory
 
 func init() {
 	cmdVendor.Flag.BoolVar(&cfg.BuildV, "v", false, "")
 	cmdVendor.Flag.BoolVar(&vendorE, "e", false, "")
+	cmdVendor.Flag.StringVar(&vendorO, "o", "", "")
+	base.AddChdirFlag(&cmdVendor.Flag)
 	base.AddModCommonFlags(&cmdVendor.Flag)
 }
 
@@ -74,7 +82,15 @@ func runVendor(ctx context.Context, cmd *base.Command, args []string) {
 	}
 	_, pkgs := modload.LoadPackages(ctx, loadOpts, "all")
 
-	vdir := filepath.Join(modload.VendorDir())
+	var vdir string
+	switch {
+	case filepath.IsAbs(vendorO):
+		vdir = vendorO
+	case vendorO != "":
+		vdir = filepath.Join(base.Cwd(), vendorO)
+	default:
+		vdir = filepath.Join(modload.VendorDir())
+	}
 	if err := os.RemoveAll(vdir); err != nil {
 		base.Fatalf("go: %v", err)
 	}
@@ -207,20 +223,25 @@ func moduleLine(m, r module.Version) string {
 }
 
 func vendorPkg(vdir, pkg string) {
-	// TODO(#42504): Instead of calling modload.ImportMap then build.ImportDir,
-	// just call load.PackagesAndErrors. To do that, we need to add a good way
-	// to ignore build constraints.
-	realPath := modload.ImportMap(pkg)
-	if realPath != pkg && modload.ImportMap(realPath) != "" {
+	src, realPath, _ := modload.Lookup("", false, pkg)
+	if src == "" {
+		base.Errorf("internal error: no pkg for %s\n", pkg)
+		return
+	}
+	if realPath != pkg {
+		// TODO(#26904): Revisit whether this behavior still makes sense.
+		// This should actually be impossible today, because the import map is the
+		// identity function for packages outside of the standard library.
+		//
+		// Part of the purpose of the vendor directory is to allow the packages in
+		// the module to continue to build in GOPATH mode, and GOPATH-mode users
+		// won't know about replacement aliasing. How important is it to maintain
+		// compatibility?
 		fmt.Fprintf(os.Stderr, "warning: %s imported as both %s and %s; making two copies.\n", realPath, realPath, pkg)
 	}
 
 	copiedFiles := make(map[string]bool)
 	dst := filepath.Join(vdir, pkg)
-	src := modload.PackageDir(realPath)
-	if src == "" {
-		fmt.Fprintf(os.Stderr, "internal error: no pkg for %s -> %s\n", pkg, realPath)
-	}
 	copyDir(dst, src, matchPotentialSourceFile, copiedFiles)
 	if m := modload.PackageModule(realPath); m.Path != "" {
 		copyMetadata(m.Path, realPath, dst, src, copiedFiles)

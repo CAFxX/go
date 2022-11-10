@@ -86,6 +86,7 @@ func (g *irgen) constDecl(out *ir.Nodes, decl *syntax.ConstDecl) {
 }
 
 func (g *irgen) funcDecl(out *ir.Nodes, decl *syntax.FuncDecl) {
+	assert(g.curDecl == "")
 	// Set g.curDecl to the function name, as context for the type params declared
 	// during types2-to-types1 translation if this is a generic function.
 	g.curDecl = decl.Name.Value
@@ -94,7 +95,7 @@ func (g *irgen) funcDecl(out *ir.Nodes, decl *syntax.FuncDecl) {
 	if recv != nil {
 		t2 := deref2(recv.Type())
 		// This is a method, so set g.curDecl to recvTypeName.methName instead.
-		g.curDecl = types2.AsNamed(t2).Obj().Name() + "." + g.curDecl
+		g.curDecl = t2.(*types2.Named).Obj().Name() + "." + g.curDecl
 	}
 
 	fn := ir.NewFunc(g.pos(decl))
@@ -113,30 +114,57 @@ func (g *irgen) funcDecl(out *ir.Nodes, decl *syntax.FuncDecl) {
 		// the Fields to represent the receiver's method set.
 		if recv := fn.Type().Recv(); recv != nil {
 			typ := types.ReceiverBaseType(recv.Type)
-			if typ.OrigSym() != nil {
+			if orig := typ.OrigType(); orig != nil {
 				// For a generic method, we mark the methods on the
 				// base generic type, since those are the methods
 				// that will be stenciled.
-				typ = typ.OrigSym().Def.Type()
+				typ = orig
 			}
 			meth := typecheck.Lookdot1(fn, typecheck.Lookup(decl.Name.Value), typ, typ.Methods(), 0)
 			meth.SetNointerface(true)
 		}
 	}
 
-	if decl.Body != nil && fn.Pragma&ir.Noescape != 0 {
-		base.ErrorfAt(fn.Pos(), "can only use //go:noescape with external func implementations")
+	if decl.Body != nil {
+		if fn.Pragma&ir.Noescape != 0 {
+			base.ErrorfAt(fn.Pos(), "can only use //go:noescape with external func implementations")
+		}
+		if (fn.Pragma&ir.UintptrKeepAlive != 0 && fn.Pragma&ir.UintptrEscapes == 0) && fn.Pragma&ir.Nosplit == 0 {
+			// Stack growth can't handle uintptr arguments that may
+			// be pointers (as we don't know which are pointers
+			// when creating the stack map). Thus uintptrkeepalive
+			// functions (and all transitive callees) must be
+			// nosplit.
+			//
+			// N.B. uintptrescapes implies uintptrkeepalive but it
+			// is OK since the arguments must escape to the heap.
+			//
+			// TODO(prattmic): Add recursive nosplit check of callees.
+			// TODO(prattmic): Functions with no body (i.e.,
+			// assembly) must also be nosplit, but we can't check
+			// that here.
+			base.ErrorfAt(fn.Pos(), "go:uintptrkeepalive requires go:nosplit")
+		}
 	}
 
 	if decl.Name.Value == "init" && decl.Recv == nil {
 		g.target.Inits = append(g.target.Inits, fn)
 	}
 
-	haveEmbed := g.haveEmbed
+	saveHaveEmbed := g.haveEmbed
+	saveCurDecl := g.curDecl
+	g.curDecl = ""
 	g.later(func() {
-		defer func(b bool) { g.haveEmbed = b }(g.haveEmbed)
+		defer func(b bool, s string) {
+			// Revert haveEmbed and curDecl back to what they were before
+			// the "later" function.
+			g.haveEmbed = b
+			g.curDecl = s
+		}(g.haveEmbed, g.curDecl)
 
-		g.haveEmbed = haveEmbed
+		// Set haveEmbed and curDecl to what they were for this funcDecl.
+		g.haveEmbed = saveHaveEmbed
+		g.curDecl = saveCurDecl
 		if fn.Type().HasTParam() {
 			g.topFuncIsGeneric = true
 		}
@@ -158,8 +186,12 @@ func (g *irgen) funcDecl(out *ir.Nodes, decl *syntax.FuncDecl) {
 }
 
 func (g *irgen) typeDecl(out *ir.Nodes, decl *syntax.TypeDecl) {
+	// Set the position for any error messages we might print (e.g. too large types).
+	base.Pos = g.pos(decl)
+	assert(ir.CurFunc != nil || g.curDecl == "")
 	// Set g.curDecl to the type name, as context for the type params declared
 	// during types2-to-types1 translation if this is a generic type.
+	saveCurDecl := g.curDecl
 	g.curDecl = decl.Name.Value
 	if decl.Alias {
 		name, _ := g.def(decl.Name)
@@ -167,6 +199,7 @@ func (g *irgen) typeDecl(out *ir.Nodes, decl *syntax.TypeDecl) {
 		assert(name.Alias()) // should be set by irgen.obj
 
 		out.Append(ir.NewDecl(g.pos(decl), ir.ODCLTYPE, name))
+		g.curDecl = ""
 		return
 	}
 
@@ -179,33 +212,9 @@ func (g *irgen) typeDecl(out *ir.Nodes, decl *syntax.TypeDecl) {
 		ntyp.SetVargen()
 	}
 
-	pragmas := g.pragmaFlags(decl.Pragma, typePragmas)
+	pragmas := g.pragmaFlags(decl.Pragma, 0)
 	name.SetPragma(pragmas) // TODO(mdempsky): Is this still needed?
 
-	if pragmas&ir.NotInHeap != 0 {
-		ntyp.SetNotInHeap(true)
-	}
-
-	// We need to use g.typeExpr(decl.Type) here to ensure that for
-	// chained, defined-type declarations like:
-	//
-	//	type T U
-	//
-	//	//go:notinheap
-	//	type U struct { … }
-	//
-	// we mark both T and U as NotInHeap. If we instead used just
-	// g.typ(otyp.Underlying()), then we'd instead set T's underlying
-	// type directly to the struct type (which is not marked NotInHeap)
-	// and fail to mark T as NotInHeap.
-	//
-	// Also, we rely here on Type.SetUnderlying allowing passing a
-	// defined type and handling forward references like from T to U
-	// above. Contrast with go/types's Named.SetUnderlying, which
-	// disallows this.
-	//
-	// [mdempsky: Subtleties like these are why I always vehemently
-	// object to new type pragmas.]
 	ntyp.SetUnderlying(g.typeExpr(decl.Type))
 
 	tparams := otyp.(*types2.Named).TypeParams()
@@ -219,6 +228,7 @@ func (g *irgen) typeDecl(out *ir.Nodes, decl *syntax.TypeDecl) {
 	}
 	types.ResumeCheckSize()
 
+	g.curDecl = saveCurDecl
 	if otyp, ok := otyp.(*types2.Named); ok && otyp.NumMethods() != 0 {
 		methods := make([]*types.Field, otyp.NumMethods())
 		for i := range methods {
@@ -229,6 +239,7 @@ func (g *irgen) typeDecl(out *ir.Nodes, decl *syntax.TypeDecl) {
 			meth := g.obj(m)
 			methods[i] = types.NewField(meth.Pos(), g.selector(m), meth.Type())
 			methods[i].Nname = meth
+			g.curDecl = ""
 		}
 		ntyp.Methods().Set(methods)
 	}
@@ -238,6 +249,8 @@ func (g *irgen) typeDecl(out *ir.Nodes, decl *syntax.TypeDecl) {
 
 func (g *irgen) varDecl(out *ir.Nodes, decl *syntax.VarDecl) {
 	pos := g.pos(decl)
+	// Set the position for any error messages we might print (e.g. too large types).
+	base.Pos = pos
 	names := make([]*ir.Name, len(decl.NameList))
 	for i, name := range decl.NameList {
 		names[i], _ = g.def(name)
@@ -276,22 +289,26 @@ func (g *irgen) varDecl(out *ir.Nodes, decl *syntax.VarDecl) {
 				} else if ir.CurFunc == nil {
 					name.Defn = as
 				}
-				lhs := []ir.Node{as.X}
-				rhs := []ir.Node{}
-				if as.Y != nil {
-					rhs = []ir.Node{as.Y}
-				}
-				transformAssign(as, lhs, rhs)
-				as.X = lhs[0]
-				if as.Y != nil {
-					as.Y = rhs[0]
+				if !g.delayTransform() {
+					lhs := []ir.Node{as.X}
+					rhs := []ir.Node{}
+					if as.Y != nil {
+						rhs = []ir.Node{as.Y}
+					}
+					transformAssign(as, lhs, rhs)
+					as.X = lhs[0]
+					if as.Y != nil {
+						as.Y = rhs[0]
+					}
 				}
 				as.SetTypecheck(1)
 				out.Append(as)
 			}
 		}
 		if as2 != nil {
-			transformAssign(as2, as2.Lhs, as2.Rhs)
+			if !g.delayTransform() {
+				transformAssign(as2, as2.Lhs, as2.Rhs)
+			}
 			as2.SetTypecheck(1)
 			out.Append(as2)
 		}

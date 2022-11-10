@@ -8,8 +8,11 @@ package types
 
 import (
 	"bytes"
+	"fmt"
 	"go/token"
+	"sort"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -23,7 +26,6 @@ import (
 //
 // Using a nil Qualifier is equivalent to using (*Package).Path: the
 // object is qualified by the import path, e.g., "encoding/json.Marshal".
-//
 type Qualifier func(*Package) string
 
 // RelativeTo returns a Qualifier that fully qualifies members of
@@ -44,14 +46,8 @@ func RelativeTo(pkg *Package) Qualifier {
 // The Qualifier controls the printing of
 // package-level objects, and may be nil.
 func TypeString(typ Type, qf Qualifier) string {
-	return typeString(typ, qf, false)
-}
-
-func typeString(typ Type, qf Qualifier, debug bool) string {
 	var buf bytes.Buffer
-	w := newTypeWriter(&buf, qf)
-	w.debug = debug
-	w.typ(typ)
+	WriteType(&buf, typ, qf)
 	return buf.String()
 }
 
@@ -71,20 +67,22 @@ func WriteSignature(buf *bytes.Buffer, sig *Signature, qf Qualifier) {
 }
 
 type typeWriter struct {
-	buf   *bytes.Buffer
-	seen  map[Type]bool
-	qf    Qualifier
-	ctxt  *Context // if non-nil, we are type hashing
-	debug bool     // if true, write debug annotations
+	buf          *bytes.Buffer
+	seen         map[Type]bool
+	qf           Qualifier
+	ctxt         *Context       // if non-nil, we are type hashing
+	tparams      *TypeParamList // local type parameters
+	paramNames   bool           // if set, write function parameter names, otherwise, write types only
+	tpSubscripts bool           // if set, write type parameter indices as subscripts
 }
 
 func newTypeWriter(buf *bytes.Buffer, qf Qualifier) *typeWriter {
-	return &typeWriter{buf, make(map[Type]bool), qf, nil, false}
+	return &typeWriter{buf, make(map[Type]bool), qf, nil, nil, true, false}
 }
 
 func newTypeHasher(buf *bytes.Buffer, ctxt *Context) *typeWriter {
 	assert(ctxt != nil)
-	return &typeWriter{buf, make(map[Type]bool), nil, ctxt, false}
+	return &typeWriter{buf, make(map[Type]bool), nil, ctxt, nil, false, false}
 }
 
 func (w *typeWriter) byte(b byte) {
@@ -189,7 +187,7 @@ func (w *typeWriter) typ(typ Type) {
 		}
 		for i, t := range t.terms {
 			if i > 0 {
-				w.byte('|')
+				w.string(termSep)
 			}
 			if t.tilde {
 				w.byte('~')
@@ -198,6 +196,19 @@ func (w *typeWriter) typ(typ Type) {
 		}
 
 	case *Interface:
+		if w.ctxt == nil {
+			if t == universeAny.Type() {
+				// When not hashing, we can try to improve type strings by writing "any"
+				// for a type that is pointer-identical to universeAny. This logic should
+				// be deprecated by more robust handling for aliases.
+				w.string("any")
+				break
+			}
+			if t == universeComparable.Type().(*Named).underlying {
+				w.string("interface{comparable}")
+				break
+			}
+		}
 		if t.implicit {
 			if len(t.methods) == 0 && len(t.embeddeds) == 1 {
 				w.typ(t.embeddeds[0])
@@ -209,20 +220,24 @@ func (w *typeWriter) typ(typ Type) {
 		}
 		w.string("interface{")
 		first := true
-		for _, m := range t.methods {
-			if !first {
-				w.byte(';')
+		if w.ctxt != nil {
+			w.typeSet(t.typeSet())
+		} else {
+			for _, m := range t.methods {
+				if !first {
+					w.byte(';')
+				}
+				first = false
+				w.string(m.name)
+				w.signature(m.typ.(*Signature))
 			}
-			first = false
-			w.string(m.name)
-			w.signature(m.typ.(*Signature))
-		}
-		for _, typ := range t.embeddeds {
-			if !first {
-				w.byte(';')
+			for _, typ := range t.embeddeds {
+				if !first {
+					w.byte(';')
+				}
+				first = false
+				w.typ(typ)
 			}
-			first = false
-			w.typ(typ)
 		}
 		w.byte('}')
 
@@ -259,11 +274,15 @@ func (w *typeWriter) typ(typ Type) {
 		}
 
 	case *Named:
-		w.typePrefix(t)
-		w.typeName(t.obj)
-		if t.targs != nil {
+		// If hashing, write a unique prefix for t to represent its identity, since
+		// named type identity is pointer identity.
+		if w.ctxt != nil {
+			w.string(strconv.Itoa(w.ctxt.getID(t)))
+		}
+		w.typeName(t.obj) // when hashing written for readability of the hash only
+		if t.inst != nil {
 			// instantiated type
-			w.typeList(t.targs.list())
+			w.typeList(t.inst.targs.list())
 		} else if w.ctxt == nil && t.TypeParams().Len() != 0 { // For type hashing, don't need to format the TypeParams
 			// parameterized type
 			w.tParamList(t.TypeParams().list())
@@ -274,9 +293,16 @@ func (w *typeWriter) typ(typ Type) {
 			w.error("unnamed type parameter")
 			break
 		}
-		w.string(t.obj.name)
-		if w.debug || w.ctxt != nil {
-			w.string(subscript(t.id))
+		if i := tparamIndex(w.tparams.list(), t); i >= 0 {
+			// The names of type parameters that are declared by the type being
+			// hashed are not part of the type identity. Replace them with a
+			// placeholder indicating their index.
+			w.string(fmt.Sprintf("$%d", i))
+		} else {
+			w.string(t.obj.name)
+			if w.tpSubscripts || w.ctxt != nil {
+				w.string(subscript(t.id))
+			}
 		}
 
 	default:
@@ -286,12 +312,39 @@ func (w *typeWriter) typ(typ Type) {
 	}
 }
 
-// If w.ctxt is non-nil, typePrefix writes a unique prefix for the named type t
-// based on the types already observed by w.ctxt. If w.ctxt is nil, it does
-// nothing.
-func (w *typeWriter) typePrefix(t *Named) {
-	if w.ctxt != nil {
-		w.string(strconv.Itoa(w.ctxt.idForType(t)))
+// typeSet writes a canonical hash for an interface type set.
+func (w *typeWriter) typeSet(s *_TypeSet) {
+	assert(w.ctxt != nil)
+	first := true
+	for _, m := range s.methods {
+		if !first {
+			w.byte(';')
+		}
+		first = false
+		w.string(m.name)
+		w.signature(m.typ.(*Signature))
+	}
+	switch {
+	case s.terms.isAll():
+		// nothing to do
+	case s.terms.isEmpty():
+		w.string(s.terms.String())
+	default:
+		var termHashes []string
+		for _, term := range s.terms {
+			// terms are not canonically sorted, so we sort their hashes instead.
+			var buf bytes.Buffer
+			if term.tilde {
+				buf.WriteByte('~')
+			}
+			newTypeHasher(&buf, w.ctxt).typ(term.typ)
+			termHashes = append(termHashes, buf.String())
+		}
+		sort.Strings(termHashes)
+		if !first {
+			w.byte(';')
+		}
+		w.string(strings.Join(termHashes, "|"))
 	}
 }
 
@@ -350,7 +403,7 @@ func (w *typeWriter) tuple(tup *Tuple, variadic bool) {
 				w.byte(',')
 			}
 			// parameter names are ignored for type identity and thus type hashes
-			if w.ctxt == nil && v.name != "" {
+			if w.ctxt == nil && v.name != "" && w.paramNames {
 				w.string(v.name)
 				w.byte(' ')
 			}
@@ -362,7 +415,7 @@ func (w *typeWriter) tuple(tup *Tuple, variadic bool) {
 				} else {
 					// special case:
 					// append(s, "foo"...) leads to signature func([]byte, string...)
-					if t := asBasic(typ); t == nil || t.kind != String {
+					if t, _ := under(typ).(*Basic); t == nil || t.kind != String {
 						w.error("expected string type")
 						continue
 					}
@@ -379,6 +432,13 @@ func (w *typeWriter) tuple(tup *Tuple, variadic bool) {
 
 func (w *typeWriter) signature(sig *Signature) {
 	if sig.TypeParams().Len() != 0 {
+		if w.ctxt != nil {
+			assert(w.tparams == nil)
+			w.tparams = sig.TypeParams()
+			defer func() {
+				w.tparams = nil
+			}()
+		}
 		w.tParamList(sig.TypeParams().list())
 	}
 

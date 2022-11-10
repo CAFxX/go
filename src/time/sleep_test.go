@@ -7,6 +7,7 @@ package time_test
 import (
 	"errors"
 	"fmt"
+	"internal/testenv"
 	"math/rand"
 	"runtime"
 	"strings"
@@ -64,9 +65,9 @@ func TestAfterFunc(t *testing.T) {
 }
 
 func TestAfterStress(t *testing.T) {
-	stop := uint32(0)
+	var stop atomic.Bool
 	go func() {
-		for atomic.LoadUint32(&stop) == 0 {
+		for !stop.Load() {
 			runtime.GC()
 			// Yield so that the OS can wake up the timer thread,
 			// so that it can generate channel sends for the main goroutine,
@@ -79,7 +80,7 @@ func TestAfterStress(t *testing.T) {
 		<-ticker.C
 	}
 	ticker.Stop()
-	atomic.StoreUint32(&stop, 1)
+	stop.Store(true)
 }
 
 func benchmark(b *testing.B, bench func(n int)) {
@@ -531,6 +532,10 @@ func TestZeroTimer(t *testing.T) {
 // Test that rapidly moving a timer earlier doesn't cause it to get dropped.
 // Issue 47329.
 func TestTimerModifiedEarlier(t *testing.T) {
+	if runtime.GOOS == "plan9" && runtime.GOARCH == "arm" {
+		testenv.SkipFlaky(t, 50470)
+	}
+
 	past := Until(Unix(0, 0))
 	count := 1000
 	fail := 0

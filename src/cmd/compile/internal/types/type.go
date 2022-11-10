@@ -21,12 +21,6 @@ type Object interface {
 	Type() *Type
 }
 
-// A TypeObject is an Object representing a named type.
-type TypeObject interface {
-	Object
-	TypeDefn() *Type // for "type T Defn", returns Defn
-}
-
 //go:generate stringer -type Kind -trimprefix T type.go
 
 // Kind describes a kind of type.
@@ -75,7 +69,7 @@ const (
 	TNIL
 	TBLANK
 
-	// pseudo-types for frame layout
+	// pseudo-types used temporarily only during frame layout (CalcSize())
 	TFUNCARGS
 	TCHANARGS
 
@@ -106,12 +100,16 @@ const (
 // It also stores pointers to several special types:
 //   - Types[TANY] is the placeholder "any" type recognized by SubstArgTypes.
 //   - Types[TBLANK] represents the blank variable's type.
+//   - Types[TINTER] is the canonical "interface{}" type.
 //   - Types[TNIL] represents the predeclared "nil" value's type.
 //   - Types[TUNSAFEPTR] is package unsafe's Pointer type.
 var Types [NTYPE]*Type
 
 var (
-	// Predeclared alias types. Kept separate for better error messages.
+	// Predeclared alias types. These are actually created as distinct
+	// defined types for better error messages, but are then specially
+	// treated as identical to their respective underlying types.
+	AnyType  *Type
 	ByteType *Type
 	RuneType *Type
 
@@ -119,8 +117,6 @@ var (
 	ErrorType *Type
 	// Predeclared comparable interface type.
 	ComparableType *Type
-	// Predeclared any interface type.
-	AnyType *Type
 
 	// Types to represent untyped string and boolean constants.
 	UntypedString = newType(TSTRING)
@@ -134,6 +130,14 @@ var (
 )
 
 // A Type represents a Go type.
+//
+// There may be multiple unnamed types with identical structure. However, there must
+// be a unique Type object for each unique named (defined) type. After noding, a
+// package-level type can be looked up by building its unique symbol sym (sym =
+// package.Lookup(name)) and checking sym.Def. If sym.Def is non-nil, the type
+// already exists at package scope and is available at sym.Def.(*ir.Name).Type().
+// Local types (which may have the same name as a package-level type) are
+// distinguished by the value of vargen.
 type Type struct {
 	// extra contains extra etype-specific fields.
 	// As an optimization, those etype-specific structs which contain exactly
@@ -152,6 +156,7 @@ type Type struct {
 	// TSLICE: Slice
 	// TSSA: string
 	// TTYPEPARAM:  *Typeparam
+	// TUNION: *Union
 	extra interface{}
 
 	// width is the width of this Type in bytes.
@@ -163,7 +168,7 @@ type Type struct {
 	allMethods Fields
 
 	// canonical OTYPE node for a named type (should be an ir.Name node with same sym)
-	nod Object
+	obj Object
 	// the underlying type (type literal or predeclared type) for a defined type
 	underlying *Type
 
@@ -173,7 +178,6 @@ type Type struct {
 		slice *Type // []T, or nil
 	}
 
-	sym    *Sym  // symbol containing name, for named types
 	vargen int32 // unique name for OTYPE/ONAME
 
 	kind  Kind  // kind of type
@@ -191,17 +195,16 @@ type Type struct {
 	// TODO(danscales): choose a better name.
 	rparams *[]*Type
 
-	// For an instantiated generic type, the symbol for the base generic type.
+	// For an instantiated generic type, the base generic type.
 	// This backpointer is useful, because the base type is the type that has
 	// the method bodies.
-	origSym *Sym
+	origType *Type
 }
 
 func (*Type) CanBeAnSSAAux() {}
 
 const (
 	typeNotInHeap  = 1 << iota // type cannot be heap allocated
-	typeBroke                  // broken type definition
 	typeNoalg                  // suppress hash and eq algorithm generation
 	typeDeferwidth             // width computation has been deferred and type is on deferredTypeStack
 	typeRecur
@@ -211,7 +214,6 @@ const (
 )
 
 func (t *Type) NotInHeap() bool  { return t.flags&typeNotInHeap != 0 }
-func (t *Type) Broke() bool      { return t.flags&typeBroke != 0 }
 func (t *Type) Noalg() bool      { return t.flags&typeNoalg != 0 }
 func (t *Type) Deferwidth() bool { return t.flags&typeDeferwidth != 0 }
 func (t *Type) Recur() bool      { return t.flags&typeRecur != 0 }
@@ -220,7 +222,6 @@ func (t *Type) IsShape() bool    { return t.flags&typeIsShape != 0 }
 func (t *Type) HasShape() bool   { return t.flags&typeHasShape != 0 }
 
 func (t *Type) SetNotInHeap(b bool)  { t.flags.set(typeNotInHeap, b) }
-func (t *Type) SetBroke(b bool)      { t.flags.set(typeBroke, b) }
 func (t *Type) SetNoalg(b bool)      { t.flags.set(typeNoalg, b) }
 func (t *Type) SetDeferwidth(b bool) { t.flags.set(typeDeferwidth, b) }
 func (t *Type) SetRecur(b bool)      { t.flags.set(typeRecur, b) }
@@ -228,7 +229,7 @@ func (t *Type) SetRecur(b bool)      { t.flags.set(typeRecur, b) }
 // Generic types should never have alg functions.
 func (t *Type) SetHasTParam(b bool) { t.flags.set(typeHasTParam, b); t.flags.set(typeNoalg, b) }
 
-// Should always do SetHasShape(true) when doing SeIsShape(true).
+// Should always do SetHasShape(true) when doing SetIsShape(true).
 func (t *Type) SetIsShape(b bool)  { t.flags.set(typeIsShape, b) }
 func (t *Type) SetHasShape(b bool) { t.flags.set(typeHasShape, b) }
 
@@ -236,31 +237,26 @@ func (t *Type) SetHasShape(b bool) { t.flags.set(typeHasShape, b) }
 func (t *Type) Kind() Kind { return t.kind }
 
 // Sym returns the name of type t.
-func (t *Type) Sym() *Sym       { return t.sym }
-func (t *Type) SetSym(sym *Sym) { t.sym = sym }
+func (t *Type) Sym() *Sym {
+	if t.obj != nil {
+		return t.obj.Sym()
+	}
+	return nil
+}
 
-// OrigSym returns the name of the original generic type that t is an
+// OrigType returns the original generic type that t is an
 // instantiation of, if any.
-func (t *Type) OrigSym() *Sym       { return t.origSym }
-func (t *Type) SetOrigSym(sym *Sym) { t.origSym = sym }
+func (t *Type) OrigType() *Type        { return t.origType }
+func (t *Type) SetOrigType(orig *Type) { t.origType = orig }
 
 // Underlying returns the underlying type of type t.
 func (t *Type) Underlying() *Type { return t.underlying }
 
-// SetNod associates t with syntax node n.
-func (t *Type) SetNod(n Object) {
-	// t.nod can be non-nil already
-	// in the case of shared *Types, like []byte or interface{}.
-	if t.nod == nil {
-		t.nod = n
-	}
-}
-
 // Pos returns a position associated with t, if any.
 // This should only be used for diagnostics.
 func (t *Type) Pos() src.XPos {
-	if t.nod != nil {
-		return t.nod.Pos()
+	if t.obj != nil {
+		return t.obj.Pos()
 	}
 	return src.NoXPos
 }
@@ -484,21 +480,25 @@ type Slice struct {
 
 // A Field is a (Sym, Type) pairing along with some other information, and,
 // depending on the context, is used to represent:
-//  - a field in a struct
-//  - a method in an interface or associated with a named type
-//  - a function parameter
+//   - a field in a struct
+//   - a method in an interface or associated with a named type
+//   - a function parameter
 type Field struct {
 	flags bitset8
 
 	Embedded uint8 // embedded field
 
-	Pos  src.XPos
+	Pos src.XPos
+
+	// Name of field/method/parameter. Can be nil for interface fields embedded
+	// in interfaces and unnamed parameters.
 	Sym  *Sym
 	Type *Type  // field type
 	Note string // literal string annotation
 
-	// For fields that represent function parameters, Nname points
-	// to the associated ONAME Node.
+	// For fields that represent function parameters, Nname points to the
+	// associated ONAME Node. For fields that represent methods, Nname points to
+	// the function name node.
 	Nname Object
 
 	// Offset in bytes of this field or method within its enclosing struct
@@ -509,16 +509,13 @@ type Field struct {
 
 const (
 	fieldIsDDD = 1 << iota // field is ... argument
-	fieldBroke             // broken field definition
 	fieldNointerface
 )
 
 func (f *Field) IsDDD() bool       { return f.flags&fieldIsDDD != 0 }
-func (f *Field) Broke() bool       { return f.flags&fieldBroke != 0 }
 func (f *Field) Nointerface() bool { return f.flags&fieldNointerface != 0 }
 
 func (f *Field) SetIsDDD(b bool)       { f.flags.set(fieldIsDDD, b) }
-func (f *Field) SetBroke(b bool)       { f.flags.set(fieldBroke, b) }
 func (f *Field) SetNointerface(b bool) { f.flags.set(fieldNointerface, b) }
 
 // End returns the offset of the first byte immediately after this field.
@@ -628,7 +625,6 @@ func NewArray(elem *Type, bound int64) *Type {
 	}
 	t := newType(TARRAY)
 	t.extra = &Array{Elem: elem, Bound: bound}
-	t.SetNotInHeap(elem.NotInHeap())
 	if elem.HasTParam() {
 		t.SetHasTParam(true)
 	}
@@ -783,7 +779,7 @@ func NewField(pos src.XPos, sym *Sym, typ *Type) *Field {
 		Offset: BADWIDTH,
 	}
 	if typ == nil {
-		f.SetBroke(true)
+		base.Fatalf("typ is nil")
 	}
 	return f
 }
@@ -1016,7 +1012,9 @@ func (t *Type) Methods() *Fields {
 }
 
 // AllMethods returns a pointer to all the methods (including embedding) for type t.
-// For an interface type, this is the set of methods that are typically iterated over.
+// For an interface type, this is the set of methods that are typically iterated
+// over. For non-interface types, AllMethods() only returns a valid result after
+// CalcMethods() has been called at least once.
 func (t *Type) AllMethods() *Fields {
 	if t.kind == TINTER {
 		// Calculate the full method set of an interface type on the fly
@@ -1062,17 +1060,6 @@ func (t *Type) SetFields(fields []*Field) {
 		base.Fatalf("SetFields of %v: width previously calculated", t)
 	}
 	t.wantEtype(TSTRUCT)
-	for _, f := range fields {
-		// If type T contains a field F with a go:notinheap
-		// type, then T must also be go:notinheap. Otherwise,
-		// you could heap allocate T and then get a pointer F,
-		// which would be a heap pointer to a go:notinheap
-		// type.
-		if f.Type != nil && f.Type.NotInHeap() {
-			t.SetNotInHeap(true)
-			break
-		}
-	}
 	t.Fields().Set(fields)
 }
 
@@ -1110,9 +1097,10 @@ func (t *Type) SimpleString() string {
 }
 
 // Cmp is a comparison between values a and b.
-// -1 if a < b
-//  0 if a == b
-//  1 if a > b
+//
+//	-1 if a < b
+//	 0 if a == b
+//	 1 if a > b
 type Cmp int8
 
 const (
@@ -1194,7 +1182,7 @@ func (t *Type) cmp(x *Type) Cmp {
 		return cmpForNe(t.kind < x.kind)
 	}
 
-	if t.sym != nil || x.sym != nil {
+	if t.obj != nil || x.obj != nil {
 		// Special case: we keep byte and uint8 separate
 		// for error messages. Treat them as equal.
 		switch t.kind {
@@ -1207,14 +1195,20 @@ func (t *Type) cmp(x *Type) Cmp {
 			if (t == Types[RuneType.kind] || t == RuneType) && (x == Types[RuneType.kind] || x == RuneType) {
 				return CMPeq
 			}
+
+		case TINTER:
+			// Make sure named any type matches any empty interface.
+			if t == AnyType && x.IsEmptyInterface() || x == AnyType && t.IsEmptyInterface() {
+				return CMPeq
+			}
 		}
 	}
 
-	if c := t.sym.cmpsym(x.sym); c != CMPeq {
+	if c := t.Sym().cmpsym(x.Sym()); c != CMPeq {
 		return c
 	}
 
-	if x.sym != nil {
+	if x.obj != nil {
 		// Syms non-nil, if vargens match then equal.
 		if t.vargen != x.vargen {
 			return cmpForNe(t.vargen < x.vargen)
@@ -1611,6 +1605,7 @@ func (t *Type) NumComponents(countBlank componentsIncludeBlankFields) int64 {
 // SoleComponent returns the only primitive component in t,
 // if there is exactly one. Otherwise, it returns nil.
 // Components are counted as in NumComponents, including blank fields.
+// Keep in sync with cmd/compile/internal/walk/convert.go:soleComponent.
 func (t *Type) SoleComponent() *Type {
 	switch t.kind {
 	case TSTRUCT:
@@ -1669,7 +1664,7 @@ func (t *Type) IsUntyped() bool {
 }
 
 // HasPointers reports whether t contains a heap pointer.
-// Note that this function ignores pointers to go:notinheap types.
+// Note that this function ignores pointers to not-in-heap types.
 func (t *Type) HasPointers() bool {
 	return PtrDataSize(t) > 0
 }
@@ -1685,7 +1680,7 @@ func FakeRecvType() *Type {
 }
 
 func FakeRecv() *Field {
-	return NewField(src.NoXPos, nil, FakeRecvType())
+	return NewField(base.AutogeneratedPos, nil, FakeRecvType())
 }
 
 var (
@@ -1698,16 +1693,20 @@ var (
 	TypeResultMem = newResults([]*Type{TypeMem})
 )
 
+func init() {
+	TypeInt128.width = 16
+	TypeInt128.align = 8
+}
+
 // NewNamed returns a new named type for the given type name. obj should be an
 // ir.Name. The new type is incomplete (marked as TFORW kind), and the underlying
 // type should be set later via SetUnderlying(). References to the type are
 // maintained until the type is filled in, so those references can be updated when
 // the type is complete.
-func NewNamed(obj TypeObject) *Type {
+func NewNamed(obj Object) *Type {
 	t := newType(TFORW)
-	t.sym = obj.Sym()
-	t.nod = obj
-	if t.sym.Pkg == ShapePkg {
+	t.obj = obj
+	if obj.Sym().Pkg == ShapePkg {
 		t.SetIsShape(true)
 		t.SetHasShape(true)
 	}
@@ -1716,10 +1715,7 @@ func NewNamed(obj TypeObject) *Type {
 
 // Obj returns the canonical type name node for a named type t, nil for an unnamed type.
 func (t *Type) Obj() Object {
-	if t.sym != nil {
-		return t.nod
-	}
-	return nil
+	return t.obj
 }
 
 // typeGen tracks the number of function-scoped defined types that
@@ -1741,8 +1737,9 @@ func (t *Type) SetVargen() {
 	t.vargen = typeGen
 }
 
-// SetUnderlying sets the underlying type. SetUnderlying automatically updates any
-// types that were waiting for this type to be completed.
+// SetUnderlying sets the underlying type of an incomplete type (i.e. type whose kind
+// is currently TFORW). SetUnderlying automatically updates any types that were waiting
+// for this type to be completed.
 func (t *Type) SetUnderlying(underlying *Type) {
 	if underlying.kind == TFORW {
 		// This type isn't computed yet; when it is, update n.
@@ -1761,9 +1758,6 @@ func (t *Type) SetUnderlying(underlying *Type) {
 
 	if underlying.NotInHeap() {
 		t.SetNotInHeap(true)
-	}
-	if underlying.Broke() {
-		t.SetBroke(true)
 	}
 	if underlying.HasTParam() {
 		t.SetHasTParam(true)
@@ -1811,11 +1805,10 @@ func fieldsHasShape(fields []*Field) bool {
 	return false
 }
 
-// NewBasic returns a new basic type of the given kind.
+// newBasic returns a new basic type of the given kind.
 func newBasic(kind Kind, obj Object) *Type {
 	t := newType(kind)
-	t.sym = obj.Sym()
-	t.nod = obj
+	t.obj = obj
 	return t
 }
 
@@ -1835,9 +1828,6 @@ func NewInterface(pkg *Pkg, methods []*Field, implicit bool) *Type {
 			break
 		}
 	}
-	if anyBroke(methods) {
-		t.SetBroke(true)
-	}
 	t.extra.(*Interface).pkg = pkg
 	t.extra.(*Interface).implicit = implicit
 	return t
@@ -1845,9 +1835,9 @@ func NewInterface(pkg *Pkg, methods []*Field, implicit bool) *Type {
 
 // NewTypeParam returns a new type param with the specified sym (package and name)
 // and specified index within the typeparam list.
-func NewTypeParam(sym *Sym, index int) *Type {
+func NewTypeParam(obj Object, index int) *Type {
 	t := newType(TTYPEPARAM)
-	t.sym = sym
+	t.obj = obj
 	t.extra.(*Typeparam).index = index
 	t.SetHasTParam(true)
 	return t
@@ -1947,9 +1937,6 @@ func NewSignature(pkg *Pkg, recv *Field, tparams, params, results []*Field) *Typ
 	funargs := func(fields []*Field, funarg Funarg) *Type {
 		s := NewStruct(NoPkg, fields)
 		s.StructType().Funarg = funarg
-		if s.Broke() {
-			t.SetBroke(true)
-		}
 		return s
 	}
 
@@ -1979,9 +1966,6 @@ func NewSignature(pkg *Pkg, recv *Field, tparams, params, results []*Field) *Typ
 func NewStruct(pkg *Pkg, fields []*Field) *Type {
 	t := newType(TSTRUCT)
 	t.SetFields(fields)
-	if anyBroke(fields) {
-		t.SetBroke(true)
-	}
 	t.extra.(*Struct).pkg = pkg
 	if fieldsHasTParam(fields) {
 		t.SetHasTParam(true)
@@ -1990,15 +1974,6 @@ func NewStruct(pkg *Pkg, fields []*Field) *Type {
 		t.SetHasShape(true)
 	}
 	return t
-}
-
-func anyBroke(fields []*Field) bool {
-	for _, f := range fields {
-		if f.Broke() {
-			return true
-		}
-	}
-	return false
 }
 
 var (
@@ -2059,10 +2034,6 @@ func IsReflexive(t *Type) bool {
 // Can this type be stored directly in an interface word?
 // Yes, if the representation is a single pointer.
 func IsDirectIface(t *Type) bool {
-	if t.Broke() {
-		return false
-	}
-
 	switch t.Kind() {
 	case TPTR:
 		// Pointers to notinheap types must be stored indirectly. See issue 42076.
@@ -2110,9 +2081,6 @@ func IsRuntimePkg(p *Pkg) bool {
 
 // IsReflectPkg reports whether p is package reflect.
 func IsReflectPkg(p *Pkg) bool {
-	if p == LocalPkg {
-		return base.Ctxt.Pkgpath == "reflect"
-	}
 	return p.Path == "reflect"
 }
 
@@ -2202,4 +2170,5 @@ var (
 
 var SimType [NTYPE]Kind
 
+// Fake package for shape types (see typecheck.Shapify()).
 var ShapePkg = NewPkg("go.shape", "go.shape")

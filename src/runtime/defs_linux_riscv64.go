@@ -10,7 +10,6 @@ const (
 	_EINTR  = 0x4
 	_EAGAIN = 0xb
 	_ENOMEM = 0xc
-	_ENOSYS = 0x26
 
 	_PROT_NONE  = 0x0
 	_PROT_READ  = 0x1
@@ -65,6 +64,8 @@ const (
 	_SIGPWR    = 0x1e
 	_SIGSYS    = 0x1f
 
+	_SIGRTMIN = 0x20
+
 	_FPE_INTDIV = 0x1
 	_FPE_INTOVF = 0x2
 	_FPE_FLTDIV = 0x3
@@ -88,17 +89,6 @@ const (
 	_CLOCK_THREAD_CPUTIME_ID = 0x3
 
 	_SIGEV_THREAD_ID = 0x4
-
-	_EPOLLIN       = 0x1
-	_EPOLLOUT      = 0x4
-	_EPOLLERR      = 0x8
-	_EPOLLHUP      = 0x10
-	_EPOLLRDHUP    = 0x2000
-	_EPOLLET       = 0x80000000
-	_EPOLL_CLOEXEC = 0x80000
-	_EPOLL_CTL_ADD = 0x1
-	_EPOLL_CTL_DEL = 0x2
-	_EPOLL_CTL_MOD = 0x3
 )
 
 type timespec struct {
@@ -122,10 +112,12 @@ func (tv *timeval) set_usec(x int32) {
 }
 
 type sigactiont struct {
-	sa_handler  uintptr
-	sa_flags    uint64
+	sa_handler uintptr
+	sa_flags   uint64
+	sa_mask    uint64
+	// Linux on riscv64 does not have the sa_restorer field, but the setsig
+	// function references it (for x86). Not much harm to include it at the end.
 	sa_restorer uintptr
-	sa_mask     uint64
 }
 
 type siginfoFields struct {
@@ -166,12 +158,6 @@ type sigevent struct {
 
 	// Pad struct to the max size in the kernel.
 	_ [_sigev_max_size - unsafe.Sizeof(sigeventFields{})]byte
-}
-
-type epollevent struct {
-	events    uint32
-	pad_cgo_0 [4]byte
-	data      [8]byte // unaligned uintptr
 }
 
 const (

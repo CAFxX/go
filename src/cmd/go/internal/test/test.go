@@ -7,18 +7,15 @@ package test
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"go/build"
-	exec "internal/execabs"
+	"internal/platform"
 	"io"
 	"io/fs"
 	"os"
-	"path"
+	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,7 +31,6 @@ import (
 	"cmd/go/internal/str"
 	"cmd/go/internal/trace"
 	"cmd/go/internal/work"
-	"cmd/internal/sys"
 	"cmd/internal/test2json"
 
 	"golang.org/x/mod/module"
@@ -65,7 +61,7 @@ followed by detailed output for each failed package.
 'Go test' recompiles each package along with any files with names matching
 the file pattern "*_test.go".
 These additional files can contain test functions, benchmark functions, fuzz
-targets and example functions. See 'go help testfunc' for more.
+tests and example functions. See 'go help testfunc' for more.
 Each listed package causes the execution of a separate test binary.
 Files whose names begin with "_" (including "_test.go") or "." are ignored.
 
@@ -132,7 +128,7 @@ test caching explicitly is to use -count=1. Tests that open files within
 the package's source root (usually $GOPATH) or that consult environment
 variables only match future runs in which the files and environment
 variables are unchanged. A cached test result is treated as executing
-in no time at all,so a successful package test result will be cached and
+in no time at all, so a successful package test result will be cached and
 reused regardless of -timeout setting.
 
 In addition to the build flags, the flags handled by 'go test' itself are:
@@ -151,11 +147,6 @@ In addition to the build flags, the flags handled by 'go test' itself are:
 	-exec xprog
 	    Run the test binary using xprog. The behavior is the same as
 	    in 'go run'. See 'go help run' for details.
-
-	-i
-	    Install packages that are dependencies of the test.
-	    Do not run the test.
-	    The -i flag is deprecated. Compiled packages are cached automatically.
 
 	-json
 	    Convert test output to JSON suitable for automated processing.
@@ -214,7 +205,7 @@ control the execution of any test:
 	    Run each test, benchmark, and fuzz seed n times (default 1).
 	    If -cpu is set, run n times for each GOMAXPROCS value.
 	    Examples are always run once. -count does not apply to
-	    fuzz targets matched by -fuzz.
+	    fuzz tests matched by -fuzz.
 
 	-cover
 	    Enable coverage analysis.
@@ -242,41 +233,48 @@ control the execution of any test:
 
 	-cpu 1,2,4
 	    Specify a list of GOMAXPROCS values for which the tests, benchmarks or
-	    fuzz targets should be executed. The default is the current value
-	    of GOMAXPROCS. -cpu does not apply to fuzz targets matched by -fuzz.
+	    fuzz tests should be executed. The default is the current value
+	    of GOMAXPROCS. -cpu does not apply to fuzz tests matched by -fuzz.
 
 	-failfast
 	    Do not start new tests after the first test failure.
 
 	-fuzz regexp
-	    Run the fuzz target matching the regular expression. When specified,
+	    Run the fuzz test matching the regular expression. When specified,
 	    the command line argument must match exactly one package within the
-	    main module, and regexp must match exactly one fuzz target within
-	    that package. After tests, benchmarks, seed corpora of other fuzz
-	    targets, and examples have completed, the matching target will be
-	    fuzzed. See the Fuzzing section of the testing package documentation
-	    for details.
+	    main module, and regexp must match exactly one fuzz test within
+	    that package. Fuzzing will occur after tests, benchmarks, seed corpora
+	    of other fuzz tests, and examples have completed. See the Fuzzing
+	    section of the testing package documentation for details.
 
 	-fuzztime t
-	    Run enough iterations of the fuzz test to take t, specified as a
-	    time.Duration (for example, -fuzztime 1h30s). The default is to run
-	    forever.
-	    The special syntax Nx means to run the fuzz test N times
-	    (for example, -fuzztime 100x).
+	    Run enough iterations of the fuzz target during fuzzing to take t,
+	    specified as a time.Duration (for example, -fuzztime 1h30s).
+		The default is to run forever.
+	    The special syntax Nx means to run the fuzz target N times
+	    (for example, -fuzztime 1000x).
+
+	-fuzzminimizetime t
+	    Run enough iterations of the fuzz target during each minimization
+	    attempt to take t, as specified as a time.Duration (for example,
+	    -fuzzminimizetime 30s).
+		The default is 60s.
+	    The special syntax Nx means to run the fuzz target N times
+	    (for example, -fuzzminimizetime 100x).
 
 	-json
 	    Log verbose output and test results in JSON. This presents the
 	    same information as the -v flag in a machine-readable format.
 
 	-list regexp
-	    List tests, benchmarks, fuzz targets, or examples matching the regular
-	    expression. No tests, benchmarks, fuzz targets, or examples will be run.
+	    List tests, benchmarks, fuzz tests, or examples matching the regular
+	    expression. No tests, benchmarks, fuzz tests, or examples will be run.
 	    This will only list top-level tests. No subtest or subbenchmarks will be
 	    shown.
 
 	-parallel n
 	    Allow parallel execution of test functions that call t.Parallel, and
-	    f.Fuzz functions that call t.Parallel when running the seed corpus.
+	    fuzz targets that call t.Parallel when running the seed corpus.
 	    The value of this flag is the maximum number of tests to run
 	    simultaneously.
 	    While fuzzing, the value of this flag is the maximum number of
@@ -291,7 +289,7 @@ control the execution of any test:
 	    (see 'go help build').
 
 	-run regexp
-	    Run only those tests, examples, and fuzz targets matching the regular
+	    Run only those tests, examples, and fuzz tests matching the regular
 	    expression. For tests, the regular expression is split by unbracketed
 	    slash (/) characters into a sequence of regular expressions, and each
 	    part of a test's identifier must match the corresponding element in
@@ -299,6 +297,7 @@ control the execution of any test:
 	    run too, so that -run=X/Y matches and runs and reports the result
 	    of all tests matching X, even those without sub-tests matching Y,
 	    because it must run them to look for those sub-tests.
+	    See also -skip.
 
 	-short
 	    Tell long-running tests to shorten their run time.
@@ -312,6 +311,14 @@ control the execution of any test:
 	    the randomizer using the system clock. If -shuffle is set to an
 	    integer N, then N will be used as the seed value. In both cases,
 	    the seed will be reported for reproducibility.
+
+	-skip regexp
+	    Run only those tests, examples, fuzz tests, and benchmarks that
+	    do not match the regular expression. Like for -run and -bench,
+	    for tests and benchmarks, the regular expression is split by unbracketed
+	    slash (/) characters into a sequence of regular expressions, and each
+	    part of a test's identifier must match the corresponding element in
+	    the sequence, if any.
 
 	-timeout d
 	    If a test binary runs longer than duration d, panic.
@@ -468,7 +475,7 @@ A benchmark function is one named BenchmarkXxx and should have the signature,
 
 	func BenchmarkXxx(b *testing.B) { ... }
 
-A fuzz target is one named FuzzXxx and should have the signature,
+A fuzz test is one named FuzzXxx and should have the signature,
 
 	func FuzzXxx(f *testing.F) { ... }
 
@@ -511,7 +518,7 @@ Here is another example where the ordering of the output is ignored:
 
 The entire test file is presented as the example when it contains a single
 example function, at least one other function, type, variable, or constant
-declaration, and no fuzz targets or test or benchmark functions.
+declaration, and no tests, benchmarks, or fuzz tests.
 
 See the documentation of the testing package for more information.
 `,
@@ -520,9 +527,6 @@ See the documentation of the testing package for more information.
 var (
 	testBench        string                            // -bench flag
 	testC            bool                              // -c flag
-	testCover        bool                              // -cover flag
-	testCoverMode    string                            // -covermode flag
-	testCoverPaths   []string                          // -coverpkg flag
 	testCoverPkgs    []*load.Package                   // -coverpkg flag
 	testCoverProfile string                            // -coverprofile flag
 	testFuzz         string                            // -fuzz flag
@@ -532,9 +536,40 @@ var (
 	testOutputDir    outputdirFlag                     // -outputdir flag
 	testShuffle      shuffleFlag                       // -shuffle flag
 	testTimeout      time.Duration                     // -timeout flag
-	testV            bool                              // -v flag
+	testV            testVFlag                         // -v flag
 	testVet          = vetFlag{flags: defaultVetFlags} // -vet flag
 )
+
+type testVFlag struct {
+	on   bool // -v is set in some form
+	json bool // -v=test2json is set, to make output better for test2json
+}
+
+func (*testVFlag) IsBoolFlag() bool { return true }
+
+func (f *testVFlag) Set(arg string) error {
+	if v, err := strconv.ParseBool(arg); err == nil {
+		f.on = v
+		f.json = false
+		return nil
+	}
+	if arg == "test2json" {
+		f.on = true
+		f.json = arg == "test2json"
+		return nil
+	}
+	return fmt.Errorf("invalid flag -test.v=%s", arg)
+}
+
+func (f *testVFlag) String() string {
+	if f.json {
+		return "test2json"
+	}
+	if f.on {
+		return "true"
+	}
+	return "false"
+}
 
 var (
 	testArgs []string
@@ -588,7 +623,7 @@ func testNeedBinary() bool {
 
 // testShowPass reports whether the output for a passing test should be shown.
 func testShowPass() bool {
-	return testV || (testList != "") || testHelp
+	return testV.on || testList != "" || testHelp
 }
 
 var defaultVetFlags = []string{
@@ -620,8 +655,8 @@ var defaultVetFlags = []string{
 }
 
 func runTest(ctx context.Context, cmd *base.Command, args []string) {
-	modload.InitWorkfile()
 	pkgArgs, testArgs = testFlags(args)
+	modload.InitWorkfile() // The test command does custom flag processing; initialize workspaces after that.
 
 	if cfg.DebugTrace != "" {
 		var close func() error
@@ -660,7 +695,7 @@ func runTest(ctx context.Context, cmd *base.Command, args []string) {
 		base.Fatalf("cannot use -o flag with multiple packages")
 	}
 	if testFuzz != "" {
-		if !sys.FuzzSupported(cfg.Goos, cfg.Goarch) {
+		if !platform.FuzzSupported(cfg.Goos, cfg.Goarch) {
 			base.Fatalf("-fuzz flag is not supported on %s/%s", cfg.Goos, cfg.Goarch)
 		}
 		if len(pkgs) != 1 {
@@ -721,11 +756,6 @@ func runTest(ctx context.Context, cmd *base.Command, args []string) {
 		testKillTimeout = testTimeout + 1*time.Minute
 	}
 
-	// For 'go test -i -o x.test', we want to build x.test. Imply -c to make the logic easier.
-	if cfg.BuildI && testO != "" {
-		testC = true
-	}
-
 	// Read testcache expiration time, if present.
 	// (We implement go clean -testcache by writing an expiration date
 	// instead of searching out and deleting test result cache entries.)
@@ -737,134 +767,25 @@ func runTest(ctx context.Context, cmd *base.Command, args []string) {
 		}
 	}
 
-	var b work.Builder
-	b.Init()
-
-	if cfg.BuildI {
-		fmt.Fprint(os.Stderr, "go: -i flag is deprecated\n")
-		cfg.BuildV = testV
-
-		deps := make(map[string]bool)
-		for _, dep := range load.TestMainDeps {
-			deps[dep] = true
+	b := work.NewBuilder("")
+	defer func() {
+		if err := b.Close(); err != nil {
+			base.Fatalf("go: %v", err)
 		}
-
-		for _, p := range pkgs {
-			// Dependencies for each test.
-			for _, path := range p.Imports {
-				deps[path] = true
-			}
-			for _, path := range p.Resolve(p.TestImports) {
-				deps[path] = true
-			}
-			for _, path := range p.Resolve(p.XTestImports) {
-				deps[path] = true
-			}
-		}
-
-		// translate C to runtime/cgo
-		if deps["C"] {
-			delete(deps, "C")
-			deps["runtime/cgo"] = true
-		}
-		// Ignore pseudo-packages.
-		delete(deps, "unsafe")
-
-		all := []string{}
-		for path := range deps {
-			if !build.IsLocalImport(path) {
-				all = append(all, path)
-			}
-		}
-		sort.Strings(all)
-
-		a := &work.Action{Mode: "go test -i"}
-		pkgs := load.PackagesAndErrors(ctx, pkgOpts, all)
-		load.CheckPackageErrors(pkgs)
-		for _, p := range pkgs {
-			if cfg.BuildToolchainName == "gccgo" && p.Standard {
-				// gccgo's standard library packages
-				// can not be reinstalled.
-				continue
-			}
-			a.Deps = append(a.Deps, b.CompileAction(work.ModeInstall, work.ModeInstall, p))
-		}
-		b.Do(ctx, a)
-		if !testC || a.Failed {
-			return
-		}
-		b.Init()
-	}
+	}()
 
 	var builds, runs, prints []*work.Action
 
-	if testCoverPaths != nil {
-		match := make([]func(*load.Package) bool, len(testCoverPaths))
-		matched := make([]bool, len(testCoverPaths))
-		for i := range testCoverPaths {
-			match[i] = load.MatchPackage(testCoverPaths[i], base.Cwd())
+	if cfg.BuildCoverPkg != nil {
+		match := make([]func(*load.Package) bool, len(cfg.BuildCoverPkg))
+		for i := range cfg.BuildCoverPkg {
+			match[i] = load.MatchPackage(cfg.BuildCoverPkg[i], base.Cwd())
 		}
 
-		// Select for coverage all dependencies matching the testCoverPaths patterns.
-		for _, p := range load.TestPackageList(ctx, pkgOpts, pkgs) {
-			haveMatch := false
-			for i := range testCoverPaths {
-				if match[i](p) {
-					matched[i] = true
-					haveMatch = true
-				}
-			}
-
-			// A package which only has test files can't be imported
-			// as a dependency, nor can it be instrumented for coverage.
-			if len(p.GoFiles)+len(p.CgoFiles) == 0 {
-				continue
-			}
-
-			// Silently ignore attempts to run coverage on
-			// sync/atomic when using atomic coverage mode.
-			// Atomic coverage mode uses sync/atomic, so
-			// we can't also do coverage on it.
-			if testCoverMode == "atomic" && p.Standard && p.ImportPath == "sync/atomic" {
-				continue
-			}
-
-			// If using the race detector, silently ignore
-			// attempts to run coverage on the runtime
-			// packages. It will cause the race detector
-			// to be invoked before it has been initialized.
-			if cfg.BuildRace && p.Standard && (p.ImportPath == "runtime" || strings.HasPrefix(p.ImportPath, "runtime/internal")) {
-				continue
-			}
-
-			if haveMatch {
-				testCoverPkgs = append(testCoverPkgs, p)
-			}
-		}
-
-		// Warn about -coverpkg arguments that are not actually used.
-		for i := range testCoverPaths {
-			if !matched[i] {
-				fmt.Fprintf(os.Stderr, "warning: no packages being tested depend on matches for pattern %s\n", testCoverPaths[i])
-			}
-		}
-
-		// Mark all the coverage packages for rebuilding with coverage.
-		for _, p := range testCoverPkgs {
-			// There is nothing to cover in package unsafe; it comes from the compiler.
-			if p.ImportPath == "unsafe" {
-				continue
-			}
-			p.Internal.CoverMode = testCoverMode
-			var coverFiles []string
-			coverFiles = append(coverFiles, p.GoFiles...)
-			coverFiles = append(coverFiles, p.CgoFiles...)
-			coverFiles = append(coverFiles, p.TestGoFiles...)
-			p.Internal.CoverVars = declareCoverVars(p, coverFiles...)
-			if testCover && testCoverMode == "atomic" {
-				ensureImport(p, "sync/atomic")
-			}
-		}
+		// Select for coverage all dependencies matching the -coverpkg
+		// patterns.
+		plist := load.TestPackageList(ctx, pkgOpts, pkgs)
+		testCoverPkgs = load.SelectCoverPackages(plist, match, "test")
 	}
 
 	// Inform the compiler that it should instrument the binary at
@@ -891,14 +812,25 @@ func runTest(ctx context.Context, cmd *base.Command, args []string) {
 		}
 	}
 
+	// Collect all the packages imported by the packages being tested.
+	allImports := make(map[*load.Package]bool)
+	for _, p := range pkgs {
+		if p.Error != nil && p.Error.IsImportCycle {
+			continue
+		}
+		for _, p1 := range p.Internal.Imports {
+			allImports[p1] = true
+		}
+	}
+
 	// Prepare build + run + print actions for all packages being tested.
 	for _, p := range pkgs {
 		// sync/atomic import is inserted by the cover tool. See #18486
-		if testCover && testCoverMode == "atomic" {
-			ensureImport(p, "sync/atomic")
+		if cfg.BuildCover && cfg.BuildCoverMode == "atomic" {
+			load.EnsureImport(p, "sync/atomic")
 		}
 
-		buildTest, runTest, printTest, err := builderTest(&b, ctx, pkgOpts, p)
+		buildTest, runTest, printTest, err := builderTest(b, ctx, pkgOpts, p, allImports[p])
 		if err != nil {
 			str := err.Error()
 			str = strings.TrimPrefix(str, "\n")
@@ -916,7 +848,7 @@ func runTest(ctx context.Context, cmd *base.Command, args []string) {
 	}
 
 	// Ultimately the goal is to print the output.
-	root := &work.Action{Mode: "go test", Func: printExitStatus, Deps: prints}
+	root := &work.Action{Mode: "go test", Actor: work.ActorFunc(printExitStatus), Deps: prints}
 
 	// Force the printing of results to happen in order,
 	// one at a time.
@@ -942,22 +874,6 @@ func runTest(ctx context.Context, cmd *base.Command, args []string) {
 	b.Do(ctx, root)
 }
 
-// ensures that package p imports the named package
-func ensureImport(p *load.Package, pkg string) {
-	for _, d := range p.Internal.Imports {
-		if d.Name == pkg {
-			return
-		}
-	}
-
-	p1 := load.LoadImportWithFlags(pkg, p.Dir, p, &load.ImportStack{}, nil, 0)
-	if p1.Error != nil {
-		base.Fatalf("load %s: %v", pkg, p1.Error)
-	}
-
-	p.Internal.Imports = append(p.Internal.Imports, p1)
-}
-
 var windowsBadWords = []string{
 	"install",
 	"patch",
@@ -965,12 +881,12 @@ var windowsBadWords = []string{
 	"update",
 }
 
-func builderTest(b *work.Builder, ctx context.Context, pkgOpts load.PackageOpts, p *load.Package) (buildAction, runAction, printAction *work.Action, err error) {
+func builderTest(b *work.Builder, ctx context.Context, pkgOpts load.PackageOpts, p *load.Package, imported bool) (buildAction, runAction, printAction *work.Action, err error) {
 	if len(p.TestGoFiles)+len(p.XTestGoFiles) == 0 {
 		build := b.CompileAction(work.ModeBuild, work.ModeBuild, p)
 		run := &work.Action{Mode: "test run", Package: p, Deps: []*work.Action{build}}
 		addTestVet(b, p, run, nil)
-		print := &work.Action{Mode: "test print", Func: builderNoTest, Package: p, Deps: []*work.Action{run}}
+		print := &work.Action{Mode: "test print", Actor: work.ActorFunc(builderNoTest), Package: p, Deps: []*work.Action{run}}
 		return build, run, print, nil
 	}
 
@@ -979,18 +895,27 @@ func builderTest(b *work.Builder, ctx context.Context, pkgOpts load.PackageOpts,
 	//	ptest - package + test files
 	//	pxtest - package of external test files
 	var cover *load.TestCover
-	if testCover {
+	if cfg.BuildCover {
 		cover = &load.TestCover{
-			Mode:     testCoverMode,
-			Local:    testCover && testCoverPaths == nil,
-			Pkgs:     testCoverPkgs,
-			Paths:    testCoverPaths,
-			DeclVars: declareCoverVars,
+			Mode:  cfg.BuildCoverMode,
+			Local: cfg.BuildCoverPkg == nil,
+			Pkgs:  testCoverPkgs,
+			Paths: cfg.BuildCoverPkg,
 		}
 	}
 	pmain, ptest, pxtest, err := load.TestPackagesFor(ctx, pkgOpts, p, cover)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+
+	// If imported is true then this package is imported by some
+	// package being tested. Make building the test version of the
+	// package depend on building the non-test version, so that we
+	// only report build errors once. Issue #44624.
+	if imported && ptest != p {
+		buildTest := b.CompileAction(work.ModeBuild, work.ModeBuild, ptest)
+		buildP := b.CompileAction(work.ModeBuild, work.ModeBuild, p)
+		buildTest.Deps = append(buildTest.Deps, buildP)
 	}
 
 	// Use last element of import path, not package name.
@@ -1074,7 +999,7 @@ func builderTest(b *work.Builder, ctx context.Context, pkgOpts load.PackageOpts,
 			pmain.Target = target
 			installAction = &work.Action{
 				Mode:    "test build",
-				Func:    work.BuildInstallFunc,
+				Actor:   work.ActorFunc(work.BuildInstallFunc),
 				Deps:    []*work.Action{buildAction},
 				Package: pmain,
 				Target:  target,
@@ -1091,7 +1016,7 @@ func builderTest(b *work.Builder, ctx context.Context, pkgOpts load.PackageOpts,
 		c := new(runCache)
 		runAction = &work.Action{
 			Mode:       "test run",
-			Func:       c.builderRunTest,
+			Actor:      work.ActorFunc(c.builderRunTest),
 			Deps:       []*work.Action{buildAction},
 			Package:    p,
 			IgnoreFail: true, // run (prepare output) even if build failed
@@ -1101,7 +1026,7 @@ func builderTest(b *work.Builder, ctx context.Context, pkgOpts load.PackageOpts,
 		vetRunAction = runAction
 		cleanAction = &work.Action{
 			Mode:       "test clean",
-			Func:       builderCleanTest,
+			Actor:      work.ActorFunc(builderCleanTest),
 			Deps:       []*work.Action{runAction},
 			Package:    p,
 			IgnoreFail: true, // clean even if test failed
@@ -1109,7 +1034,7 @@ func builderTest(b *work.Builder, ctx context.Context, pkgOpts load.PackageOpts,
 		}
 		printAction = &work.Action{
 			Mode:       "test print",
-			Func:       builderPrintTest,
+			Actor:      work.ActorFunc(builderPrintTest),
 			Deps:       []*work.Action{cleanAction},
 			Package:    p,
 			IgnoreFail: true, // print even if test failed
@@ -1151,53 +1076,9 @@ func addTestVet(b *work.Builder, p *load.Package, runAction, installAction *work
 	}
 }
 
-// isTestFile reports whether the source file is a set of tests and should therefore
-// be excluded from coverage analysis.
-func isTestFile(file string) bool {
-	// We don't cover tests, only the code they test.
-	return strings.HasSuffix(file, "_test.go")
-}
-
-// declareCoverVars attaches the required cover variables names
-// to the files, to be used when annotating the files.
-func declareCoverVars(p *load.Package, files ...string) map[string]*load.CoverVar {
-	coverVars := make(map[string]*load.CoverVar)
-	coverIndex := 0
-	// We create the cover counters as new top-level variables in the package.
-	// We need to avoid collisions with user variables (GoCover_0 is unlikely but still)
-	// and more importantly with dot imports of other covered packages,
-	// so we append 12 hex digits from the SHA-256 of the import path.
-	// The point is only to avoid accidents, not to defeat users determined to
-	// break things.
-	sum := sha256.Sum256([]byte(p.ImportPath))
-	h := fmt.Sprintf("%x", sum[:6])
-	for _, file := range files {
-		if isTestFile(file) {
-			continue
-		}
-		// For a package that is "local" (imported via ./ import or command line, outside GOPATH),
-		// we record the full path to the file name.
-		// Otherwise we record the import path, then a forward slash, then the file name.
-		// This makes profiles within GOPATH file system-independent.
-		// These names appear in the cmd/cover HTML interface.
-		var longFile string
-		if p.Internal.Local {
-			longFile = filepath.Join(p.Dir, file)
-		} else {
-			longFile = path.Join(p.ImportPath, file)
-		}
-		coverVars[file] = &load.CoverVar{
-			File: longFile,
-			Var:  fmt.Sprintf("GoCover_%d_%x", coverIndex, h),
-		}
-		coverIndex++
-	}
-	return coverVars
-}
-
 var noTestsToRun = []byte("\ntesting: warning: no tests to run\n")
-var noTargetsToFuzz = []byte("\ntesting: warning: no targets to fuzz\n")
-var tooManyTargetsToFuzz = []byte("\ntesting: warning: -fuzz matches more than one target, won't fuzz\n")
+var noFuzzTestsToFuzz = []byte("\ntesting: warning: no fuzz tests to fuzz\n")
+var tooManyFuzzTestsToFuzz = []byte("\ntesting: warning: -fuzz matches more than one fuzz test, won't fuzz\n")
 
 type runCache struct {
 	disableCache bool // cache should be disabled for this run
@@ -1306,7 +1187,26 @@ func (c *runCache) builderRunTest(b *work.Builder, ctx context.Context, a *work.
 		fuzzCacheDir := filepath.Join(cache.Default().FuzzDir(), a.Package.ImportPath)
 		fuzzArg = []string{"-test.fuzzcachedir=" + fuzzCacheDir}
 	}
-	args := str.StringList(execCmd, a.Deps[0].BuiltTarget(), testlogArg, panicArg, fuzzArg, testArgs)
+	coverdirArg := []string{}
+	addToEnv := ""
+	if cfg.BuildCover {
+		gcd := filepath.Join(a.Objdir, "gocoverdir")
+		if err := b.Mkdir(gcd); err != nil {
+			// If we can't create a temp dir, terminate immediately
+			// with an error as opposed to returning an error to the
+			// caller; failed MkDir most likely indicates that we're
+			// out of disk space or there is some other systemic error
+			// that will make forward progress unlikely.
+			base.Fatalf("failed to create temporary dir: %v", err)
+		}
+		coverdirArg = append(coverdirArg, "-test.gocoverdir="+gcd)
+		// Even though we are passing the -test.gocoverdir option to
+		// the test binary, also set GOCOVERDIR as well. This is
+		// intended to help with tests that run "go build" to build
+		// fresh copies of tools to test as part of the testing.
+		addToEnv = "GOCOVERDIR=" + gcd
+	}
+	args := str.StringList(execCmd, a.Deps[0].BuiltTarget(), testlogArg, panicArg, fuzzArg, coverdirArg, testArgs)
 
 	if testCoverProfile != "" {
 		// Write coverage to temporary profile, for merging later.
@@ -1326,7 +1226,15 @@ func (c *runCache) builderRunTest(b *work.Builder, ctx context.Context, a *work.
 
 	cmd := exec.Command(args[0], args[1:]...)
 	cmd.Dir = a.Package.Dir
-	cmd.Env = base.AppendPWD(cfg.OrigEnv[:len(cfg.OrigEnv):len(cfg.OrigEnv)], cmd.Dir)
+
+	env := cfg.OrigEnv[:len(cfg.OrigEnv):len(cfg.OrigEnv)]
+	env = base.AppendPATH(env)
+	env = base.AppendPWD(env, cmd.Dir)
+	cmd.Env = env
+	if addToEnv != "" {
+		cmd.Env = append(cmd.Env, addToEnv)
+	}
+
 	cmd.Stdout = stdout
 	cmd.Stderr = stdout
 
@@ -1399,11 +1307,11 @@ func (c *runCache) builderRunTest(b *work.Builder, ctx context.Context, a *work.
 		if bytes.HasPrefix(out, noTestsToRun[1:]) || bytes.Contains(out, noTestsToRun) {
 			norun = " [no tests to run]"
 		}
-		if bytes.HasPrefix(out, noTargetsToFuzz[1:]) || bytes.Contains(out, noTargetsToFuzz) {
-			norun = " [no targets to fuzz]"
+		if bytes.HasPrefix(out, noFuzzTestsToFuzz[1:]) || bytes.Contains(out, noFuzzTestsToFuzz) {
+			norun = " [no fuzz tests to fuzz]"
 		}
-		if bytes.HasPrefix(out, tooManyTargetsToFuzz[1:]) || bytes.Contains(out, tooManyTargetsToFuzz) {
-			norun = " [will not fuzz, -fuzz matches more than one target]"
+		if bytes.HasPrefix(out, tooManyFuzzTestsToFuzz[1:]) || bytes.Contains(out, tooManyFuzzTestsToFuzz) {
+			norun = "[-fuzz matches more than one fuzz test, won't fuzz]"
 		}
 		if len(out) > 0 && !bytes.HasSuffix(out, []byte("\n")) {
 			// Ensure that the output ends with a newline before the "ok"
@@ -1432,7 +1340,11 @@ func (c *runCache) builderRunTest(b *work.Builder, ctx context.Context, a *work.
 		// not a pipe.
 		// TODO(golang.org/issue/29062): tests that exit with status 0 without
 		// printing a final result should fail.
-		fmt.Fprintf(cmd.Stdout, "FAIL\t%s\t%s\n", a.Package.ImportPath, t)
+		prefix := ""
+		if testJSON || testV.json {
+			prefix = "\x16"
+		}
+		fmt.Fprintf(cmd.Stdout, "%sFAIL\t%s\t%s\n", prefix, a.Package.ImportPath, t)
 	}
 
 	if cmd.Stdout != &buf {
@@ -1630,15 +1542,13 @@ func computeTestInputsID(a *work.Action, testlog []byte) (cache.ActionID, error)
 			continue
 		}
 		s := string(line)
-		i := strings.Index(s, " ")
-		if i < 0 {
+		op, name, found := strings.Cut(s, " ")
+		if !found {
 			if cache.DebugTest {
 				fmt.Fprintf(os.Stderr, "testcache: %s: input list malformed (%q)\n", a.Package.ImportPath, line)
 			}
 			return cache.ActionID{}, errBadTestInputs
 		}
-		op := s[:i]
-		name := s[i+1:]
 		switch op {
 		default:
 			if cache.DebugTest {
@@ -1800,7 +1710,7 @@ func (c *runCache) saveOutput(a *work.Action) {
 // coveragePercentage returns the coverage results (if enabled) for the
 // test. It uncovers the data by scanning the output from the test run.
 func coveragePercentage(out []byte) string {
-	if !testCover {
+	if !cfg.BuildCover {
 		return ""
 	}
 	// The string looks like

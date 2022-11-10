@@ -29,6 +29,8 @@ var builtinCalls = []struct {
 	{"cap", `var s [10]int; _ = cap(&s)`, `invalid type`}, // constant
 	{"cap", `var s []int64; _ = cap(s)`, `func([]int64) int`},
 	{"cap", `var c chan<-bool; _ = cap(c)`, `func(chan<- bool) int`},
+	{"cap", `type S []byte; var s S; _ = cap(s)`, `func(p.S) int`},
+	{"cap", `var s P; _ = cap(s)`, `func(P) int`},
 
 	{"len", `_ = len("foo")`, `invalid type`}, // constant
 	{"len", `var s string; _ = len(s)`, `func(string) int`},
@@ -37,6 +39,8 @@ var builtinCalls = []struct {
 	{"len", `var s []int64; _ = len(s)`, `func([]int64) int`},
 	{"len", `var c chan<-bool; _ = len(c)`, `func(chan<- bool) int`},
 	{"len", `var m map[string]float32; _ = len(m)`, `func(map[string]float32) int`},
+	{"len", `type S []byte; var s S; _ = len(s)`, `func(p.S) int`},
+	{"len", `var s P; _ = len(s)`, `func(P) int`},
 
 	{"close", `var c chan int; close(c)`, `func(chan int)`},
 	{"close", `var c chan<- chan string; close(c)`, `func(chan<- chan string)`},
@@ -125,6 +129,16 @@ var builtinCalls = []struct {
 
 	{"Slice", `var p *int; _ = unsafe.Slice(p, 1)`, `func(*int, int) []int`},
 	{"Slice", `var p *byte; var n uintptr; _ = unsafe.Slice(p, n)`, `func(*byte, uintptr) []byte`},
+	{"Slice", `type B *byte; var b B; _ = unsafe.Slice(b, 0)`, `func(*byte, int) []byte`},
+
+	{"SliceData", "var s []int; _ = unsafe.SliceData(s)", `func([]int) *int`},
+	{"SliceData", "type S []int; var s S; _ = unsafe.SliceData(s)", `func([]int) *int`},
+
+	{"String", `var p *byte; _ = unsafe.String(p, 1)`, `func(*byte, int) string`},
+	{"String", `type B *byte; var b B; _ = unsafe.String(b, 0)`, `func(*byte, int) string`},
+
+	{"StringData", `var s string; _ = unsafe.StringData(s)`, `func(string) *byte`},
+	{"StringData", `_ = unsafe.StringData("foo")`, `func(string) *byte`},
 
 	{"assert", `assert(true)`, `invalid type`},                                    // constant
 	{"assert", `type B bool; const pred B = 1 < 2; assert(pred)`, `invalid type`}, // constant
@@ -157,7 +171,7 @@ func TestBuiltinSignatures(t *testing.T) {
 // parseGenericSrc in types2 is not necessary. We can just parse in testBuiltinSignature below.
 
 func testBuiltinSignature(t *testing.T, name, src0, want string) {
-	src := fmt.Sprintf(`package p; import "unsafe"; type _ unsafe.Pointer /* use unsafe */; func _[P any]() { %s }`, src0)
+	src := fmt.Sprintf(`package p; import "unsafe"; type _ unsafe.Pointer /* use unsafe */; func _[P ~[]byte]() { %s }`, src0)
 	f, err := parser.ParseFile(fset, "", src, 0)
 	if err != nil {
 		t.Errorf("%s: %s", src0, err)

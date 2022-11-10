@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build aix || darwin || dragonfly || freebsd || (js && wasm) || linux || netbsd || openbsd || solaris || windows
+//go:build unix || (js && wasm) || windows
 
 package net
 
@@ -55,14 +55,23 @@ func (c *TCPConn) readFrom(r io.Reader) (int64, error) {
 }
 
 func (sd *sysDialer) dialTCP(ctx context.Context, laddr, raddr *TCPAddr) (*TCPConn, error) {
-	if testHookDialTCP != nil {
-		return testHookDialTCP(ctx, sd.network, laddr, raddr)
+	if h := sd.testHookDialTCP; h != nil {
+		return h(ctx, sd.network, laddr, raddr)
+	}
+	if h := testHookDialTCP; h != nil {
+		return h(ctx, sd.network, laddr, raddr)
 	}
 	return sd.doDialTCP(ctx, laddr, raddr)
 }
 
 func (sd *sysDialer) doDialTCP(ctx context.Context, laddr, raddr *TCPAddr) (*TCPConn, error) {
-	fd, err := internetSocket(ctx, sd.network, laddr, raddr, syscall.SOCK_STREAM, 0, "dial", sd.Dialer.Control)
+	ctrlCtxFn := sd.Dialer.ControlContext
+	if ctrlCtxFn == nil && sd.Dialer.Control != nil {
+		ctrlCtxFn = func(cxt context.Context, network, address string, c syscall.RawConn) error {
+			return sd.Dialer.Control(network, address, c)
+		}
+	}
+	fd, err := internetSocket(ctx, sd.network, laddr, raddr, syscall.SOCK_STREAM, 0, "dial", ctrlCtxFn)
 
 	// TCP has a rarely used mechanism called a 'simultaneous connection' in
 	// which Dial("tcp", addr1, addr2) run on the machine at addr1 can
@@ -92,7 +101,7 @@ func (sd *sysDialer) doDialTCP(ctx context.Context, laddr, raddr *TCPAddr) (*TCP
 		if err == nil {
 			fd.Close()
 		}
-		fd, err = internetSocket(ctx, sd.network, laddr, raddr, syscall.SOCK_STREAM, 0, "dial", sd.Dialer.Control)
+		fd, err = internetSocket(ctx, sd.network, laddr, raddr, syscall.SOCK_STREAM, 0, "dial", ctrlCtxFn)
 	}
 
 	if err != nil {
@@ -165,7 +174,13 @@ func (ln *TCPListener) file() (*os.File, error) {
 }
 
 func (sl *sysListener) listenTCP(ctx context.Context, laddr *TCPAddr) (*TCPListener, error) {
-	fd, err := internetSocket(ctx, sl.network, laddr, nil, syscall.SOCK_STREAM, 0, "listen", sl.ListenConfig.Control)
+	var ctrlCtxFn func(cxt context.Context, network, address string, c syscall.RawConn) error
+	if sl.ListenConfig.Control != nil {
+		ctrlCtxFn = func(cxt context.Context, network, address string, c syscall.RawConn) error {
+			return sl.ListenConfig.Control(network, address, c)
+		}
+	}
+	fd, err := internetSocket(ctx, sl.network, laddr, nil, syscall.SOCK_STREAM, 0, "listen", ctrlCtxFn)
 	if err != nil {
 		return nil, err
 	}

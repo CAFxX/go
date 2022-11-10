@@ -6,6 +6,7 @@ package tar
 
 import (
 	"bytes"
+	"compress/bzip2"
 	"crypto/md5"
 	"errors"
 	"fmt"
@@ -243,6 +244,9 @@ func TestReader(t *testing.T) {
 	}, {
 		file: "testdata/pax-bad-hdr-file.tar",
 		err:  ErrHeader,
+	}, {
+		file: "testdata/pax-bad-hdr-large.tar.bz2",
+		err:  ErrFieldTooLong,
 	}, {
 		file: "testdata/pax-bad-mtime-file.tar",
 		err:  ErrHeader,
@@ -625,9 +629,14 @@ func TestReader(t *testing.T) {
 			}
 			defer f.Close()
 
+			var fr io.Reader = f
+			if strings.HasSuffix(v.file, ".bz2") {
+				fr = bzip2.NewReader(fr)
+			}
+
 			// Capture all headers and checksums.
 			var (
-				tr      = NewReader(f)
+				tr      = NewReader(fr)
 				hdrs    []*Header
 				chksums []string
 				rdbuf   = make([]byte, 8)
@@ -657,7 +666,6 @@ func TestReader(t *testing.T) {
 			for i, hdr := range hdrs {
 				if i >= len(v.headers) {
 					t.Fatalf("entry %d: unexpected header:\ngot %+v", i, *hdr)
-					continue
 				}
 				if !reflect.DeepEqual(*hdr, *v.headers[i]) {
 					t.Fatalf("entry %d: incorrect header:\ngot  %+v\nwant %+v", i, *hdr, *v.headers[i])
@@ -670,7 +678,6 @@ func TestReader(t *testing.T) {
 			for i, sum := range chksums {
 				if i >= len(v.chksums) {
 					t.Fatalf("entry %d: unexpected sum: got %s", i, sum)
-					continue
 				}
 				if sum != v.chksums[i] {
 					t.Fatalf("entry %d: incorrect checksum: got %s, want %s", i, sum, v.chksums[i])
@@ -1363,7 +1370,7 @@ func TestFileReader(t *testing.T) {
 			wantLCnt int64
 			wantPCnt int64
 		}
-		testFnc interface{} // testRead | testWriteTo | testRemaining
+		testFnc any // testRead | testWriteTo | testRemaining
 	)
 
 	type (
@@ -1376,7 +1383,7 @@ func TestFileReader(t *testing.T) {
 			spd     sparseDatas
 			size    int64
 		}
-		fileMaker interface{} // makeReg | makeSparse
+		fileMaker any // makeReg | makeSparse
 	)
 
 	vectors := []struct {

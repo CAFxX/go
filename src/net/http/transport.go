@@ -38,8 +38,8 @@ import (
 // DefaultTransport is the default implementation of Transport and is
 // used by DefaultClient. It establishes network connections as needed
 // and caches them for reuse by subsequent calls. It uses HTTP proxies
-// as directed by the $HTTP_PROXY and $NO_PROXY (or $http_proxy and
-// $no_proxy) environment variables.
+// as directed by the environment variables HTTP_PROXY, HTTPS_PROXY
+// and NO_PROXY (or the lowercase versions thereof).
 var DefaultTransport RoundTripper = &Transport{
 	Proxy: ProxyFromEnvironment,
 	DialContext: defaultTransportDialContext(&net.Dialer{
@@ -422,8 +422,8 @@ func (t *Transport) onceSetNextProtoDefaults() {
 // ProxyFromEnvironment returns the URL of the proxy to use for a
 // given request, as indicated by the environment variables
 // HTTP_PROXY, HTTPS_PROXY and NO_PROXY (or the lowercase versions
-// thereof). HTTPS_PROXY takes precedence over HTTP_PROXY for https
-// requests.
+// thereof). Requests use the proxy from the environment variable
+// matching their scheme, unless excluded by NO_PROXY.
 //
 // The environment values may be either a complete URL or a
 // "host[:port]", in which case the "http" scheme is assumed.
@@ -525,7 +525,8 @@ func (t *Transport) roundTrip(req *Request) (*Response, error) {
 			for _, v := range vv {
 				if !httpguts.ValidHeaderFieldValue(v) {
 					req.closeBody()
-					return nil, fmt.Errorf("net/http: invalid header field value %q for key %v", v, k)
+					// Don't include the value in the error, because it may be sensitive.
+					return nil, fmt.Errorf("net/http: invalid header field value for %q", k)
 				}
 			}
 		}
@@ -606,6 +607,9 @@ func (t *Transport) roundTrip(req *Request) (*Response, error) {
 		} else if !pconn.shouldRetryRequest(req, err) {
 			// Issue 16465: return underlying net.Conn.Read error from peek,
 			// as we've historically done.
+			if e, ok := err.(nothingWrittenError); ok {
+				err = e.error
+			}
 			if e, ok := err.(transportReadFromServerError); ok {
 				err = e.err
 			}
@@ -806,14 +810,12 @@ func (t *Transport) cancelRequest(key cancelKey, err error) bool {
 //
 
 var (
-	// proxyConfigOnce guards proxyConfig
 	envProxyOnce      sync.Once
 	envProxyFuncValue func(*url.URL) (*url.URL, error)
 )
 
-// defaultProxyConfig returns a ProxyConfig value looked up
-// from the environment. This mitigates expensive lookups
-// on some platforms (e.g. Windows).
+// envProxyFunc returns a function that reads the
+// environment variable to determine the proxy address.
 func envProxyFunc() func(*url.URL) (*url.URL, error) {
 	envProxyOnce.Do(func() {
 		envProxyFuncValue = httpproxy.FromEnvironment().ProxyFunc()
@@ -1792,7 +1794,6 @@ var _ io.ReaderFrom = (*persistConnWriter)(nil)
 //	socks5://proxy.com|https|foo.com  socks5 to proxy, then https to foo.com
 //	https://proxy.com|https|foo.com   https to proxy, then CONNECT to foo.com
 //	https://proxy.com|http            https to proxy, http to anywhere after that
-//
 type connectMethod struct {
 	_            incomparable
 	proxyURL     *url.URL // nil for no proxy, else full proxy URL
@@ -2032,6 +2033,9 @@ func (pc *persistConn) mapRoundTripError(req *transportRequest, startBytesWritte
 	}
 
 	if _, ok := err.(transportReadFromServerError); ok {
+		if pc.nwrite == startBytesWritten {
+			return nothingWrittenError{err}
+		}
 		// Don't decorate
 		return err
 	}
@@ -2668,8 +2672,8 @@ func (pc *persistConn) roundTrip(req *transportRequest) (resp *Response, err err
 // a t.Logf func. See export_test.go's Request.WithT method.
 type tLogKey struct{}
 
-func (tr *transportRequest) logf(format string, args ...interface{}) {
-	if logf, ok := tr.Request.Context().Value(tLogKey{}).(func(string, ...interface{})); ok {
+func (tr *transportRequest) logf(format string, args ...any) {
+	if logf, ok := tr.Request.Context().Value(tLogKey{}).(func(string, ...any)); ok {
 		logf(time.Now().Format(time.RFC3339Nano)+": "+format, args...)
 	}
 }

@@ -12,7 +12,10 @@ import (
 func (c *Certificate) systemVerify(opts *VerifyOptions) (chains [][]*Certificate, err error) {
 	certs := macOS.CFArrayCreateMutable()
 	defer macOS.ReleaseCFArray(certs)
-	leaf := macOS.SecCertificateCreateWithData(c.Raw)
+	leaf, err := macOS.SecCertificateCreateWithData(c.Raw)
+	if err != nil {
+		return nil, errors.New("invalid leaf certificate")
+	}
 	macOS.CFArrayAppendValue(certs, leaf)
 	if opts.Intermediates != nil {
 		for _, lc := range opts.Intermediates.lazyCerts {
@@ -20,14 +23,19 @@ func (c *Certificate) systemVerify(opts *VerifyOptions) (chains [][]*Certificate
 			if err != nil {
 				return nil, err
 			}
-			sc := macOS.SecCertificateCreateWithData(c.Raw)
-			macOS.CFArrayAppendValue(certs, sc)
+			sc, err := macOS.SecCertificateCreateWithData(c.Raw)
+			if err == nil {
+				macOS.CFArrayAppendValue(certs, sc)
+			}
 		}
 	}
 
 	policies := macOS.CFArrayCreateMutable()
 	defer macOS.ReleaseCFArray(policies)
-	sslPolicy := macOS.SecPolicyCreateSSL(opts.DNSName)
+	sslPolicy, err := macOS.SecPolicyCreateSSL(opts.DNSName)
+	if err != nil {
+		return nil, err
+	}
 	macOS.CFArrayAppendValue(policies, sslPolicy)
 
 	trustObj, err := macOS.SecTrustCreateWithCertificates(certs, policies)
@@ -56,7 +64,10 @@ func (c *Certificate) systemVerify(opts *VerifyOptions) (chains [][]*Certificate
 	chain := [][]*Certificate{{}}
 	numCerts := macOS.SecTrustGetCertificateCount(trustObj)
 	for i := 0; i < numCerts; i++ {
-		certRef := macOS.SecTrustGetCertificateAtIndex(trustObj, i)
+		certRef, err := macOS.SecTrustGetCertificateAtIndex(trustObj, i)
+		if err != nil {
+			return nil, err
+		}
 		cert, err := exportCertificate(certRef)
 		if err != nil {
 			return nil, err
@@ -96,16 +107,13 @@ func (c *Certificate) systemVerify(opts *VerifyOptions) (chains [][]*Certificate
 
 // exportCertificate returns a *Certificate for a SecCertificateRef.
 func exportCertificate(cert macOS.CFRef) (*Certificate, error) {
-	data, err := macOS.SecItemExport(cert)
+	data, err := macOS.SecCertificateCopyData(cert)
 	if err != nil {
 		return nil, err
 	}
-	defer macOS.CFRelease(data)
-	der := macOS.CFDataToSlice(data)
-
-	return ParseCertificate(der)
+	return ParseCertificate(data)
 }
 
 func loadSystemRoots() (*CertPool, error) {
-	return nil, nil
+	return &CertPool{systemPool: true}, nil
 }

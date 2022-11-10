@@ -74,8 +74,7 @@ func stringtoruneslit(n *ir.ConvExpr) ir.Node {
 		i++
 	}
 
-	nn := ir.NewCompLitExpr(base.Pos, ir.OCOMPLIT, ir.TypeNode(n.Type()), nil)
-	nn.List = list
+	nn := ir.NewCompLitExpr(base.Pos, ir.OCOMPLIT, n.Type(), list)
 	typed(n.Type(), nn)
 	// Need to transform the OCOMPLIT.
 	return transformCompLit(nn)
@@ -115,6 +114,31 @@ func transformConv(n *ir.ConvExpr) ir.Node {
 		if n.X.Op() == ir.OLITERAL {
 			return stringtoruneslit(n)
 		}
+
+	case ir.OBYTES2STR:
+		assert(t.IsSlice())
+		assert(t.Elem().Kind() == types.TUINT8)
+		if t.Elem() != types.ByteType && t.Elem() != types.Types[types.TUINT8] {
+			// If t is a slice of a user-defined byte type B (not uint8
+			// or byte), then add an extra CONVNOP from []B to []byte, so
+			// that the call to slicebytetostring() added in walk will
+			// typecheck correctly.
+			n.X = ir.NewConvExpr(n.X.Pos(), ir.OCONVNOP, types.NewSlice(types.ByteType), n.X)
+			n.X.SetTypecheck(1)
+		}
+
+	case ir.ORUNES2STR:
+		assert(t.IsSlice())
+		assert(t.Elem().Kind() == types.TINT32)
+		if t.Elem() != types.RuneType && t.Elem() != types.Types[types.TINT32] {
+			// If t is a slice of a user-defined rune type B (not uint32
+			// or rune), then add an extra CONVNOP from []B to []rune, so
+			// that the call to slicerunetostring() added in walk will
+			// typecheck correctly.
+			n.X = ir.NewConvExpr(n.X.Pos(), ir.OCONVNOP, types.NewSlice(types.RuneType), n.X)
+			n.X.SetTypecheck(1)
+		}
+
 	}
 	return n
 }
@@ -133,8 +157,12 @@ func transformConvCall(n *ir.CallExpr) ir.Node {
 // (non-conversion, non-builtin part) of typecheck.tcCall. This code should work even
 // in the case of OCALL/OFUNCINST.
 func transformCall(n *ir.CallExpr) {
+	// Set base.Pos, since transformArgs below may need it, but transformCall
+	// is called in some passes that don't set base.Pos.
+	ir.SetPos(n)
 	// n.Type() can be nil for calls with no return value
 	assert(n.Typecheck() == 1)
+	typecheck.RewriteNonNameCall(n)
 	transformArgs(n)
 	l := n.X
 	t := l.Type()
@@ -214,7 +242,7 @@ func transformCompare(n *ir.BinaryExpr) {
 			aop, _ := typecheck.Assignop(rt, lt)
 			if aop != ir.OXXX {
 				types.CalcSize(rt)
-				if rt.HasTParam() || rt.IsInterface() == lt.IsInterface() || rt.Size() >= 1<<16 {
+				if rt.HasShape() || rt.IsInterface() == lt.IsInterface() || rt.Size() >= 1<<16 {
 					r = ir.NewConvExpr(base.Pos, aop, lt, r)
 					r.SetTypecheck(1)
 				}
@@ -328,6 +356,37 @@ assignOK:
 		}
 		checkLHS(0, r.Type())
 		checkLHS(1, types.UntypedBool)
+		t := lhs[0].Type()
+		if t != nil && rhs[0].Type().HasShape() && t.IsInterface() && !types.IdenticalStrict(t, rhs[0].Type()) {
+			// This is a multi-value assignment (map, channel, or dot-type)
+			// where the main result is converted to an interface during the
+			// assignment. Normally, the needed CONVIFACE is not created
+			// until (*orderState).as2ok(), because the AS2* ops and their
+			// sub-ops are so tightly intertwined. But we need to create the
+			// CONVIFACE now to enable dictionary lookups. So, assign the
+			// results first to temps, so that we can manifest the CONVIFACE
+			// in assigning the first temp to lhs[0]. If we added the
+			// CONVIFACE into rhs[0] directly, we would break a lot of later
+			// code that depends on the tight coupling between the AS2* ops
+			// and their sub-ops. (Issue #50642).
+			v := typecheck.Temp(rhs[0].Type())
+			ok := typecheck.Temp(types.Types[types.TBOOL])
+			as := ir.NewAssignListStmt(base.Pos, stmt.Op(), []ir.Node{v, ok}, []ir.Node{r})
+			as.Def = true
+			as.PtrInit().Append(ir.NewDecl(base.Pos, ir.ODCL, v))
+			as.PtrInit().Append(ir.NewDecl(base.Pos, ir.ODCL, ok))
+			as.SetTypecheck(1)
+			// Change stmt to be a normal assignment of the temps to the final
+			// left-hand-sides. We re-create the original multi-value assignment
+			// so that it assigns to the temps and add it as an init of stmt.
+			//
+			// TODO: fix the order of evaluation, so that the lval of lhs[0]
+			// is evaluated before rhs[0] (similar to problem in #50672).
+			stmt.SetOp(ir.OAS2)
+			stmt.PtrInit().Append(as)
+			// assignconvfn inserts the CONVIFACE.
+			stmt.Rhs = []ir.Node{assignconvfn(v, t), ok}
+		}
 		return
 	}
 
@@ -671,11 +730,11 @@ func transformAppend(n *ir.CallExpr) ir.Node {
 	assert(t.IsSlice())
 
 	if n.IsDDD {
-		if t.Elem().IsKind(types.TUINT8) && args[1].Type().IsString() {
-			return n
-		}
-
-		args[1] = assignconvfn(args[1], t.Underlying())
+		// assignconvfn is of args[1] not required here, as the
+		// types of args[0] and args[1] don't need to match
+		// (They will both have an underlying type which are
+		// slices of identical base types, or be []byte and string.)
+		// See issue 53888.
 		return n
 	}
 
@@ -841,7 +900,7 @@ func transformBuiltin(n *ir.CallExpr) ir.Node {
 		transformArgs(n)
 		fallthrough
 
-	case ir.ONEW, ir.OALIGNOF, ir.OOFFSETOF, ir.OSIZEOF:
+	case ir.ONEW, ir.OALIGNOF, ir.OOFFSETOF, ir.OSIZEOF, ir.OUNSAFESLICEDATA, ir.OUNSAFESTRINGDATA:
 		u := ir.NewUnaryExpr(n.Pos(), op, n.Args[0])
 		u1 := typed(n.Type(), ir.InitExpr(n.Init(), u)) // typecheckargs can add to old.Init
 		switch op {
@@ -854,12 +913,12 @@ func transformBuiltin(n *ir.CallExpr) ir.Node {
 		case ir.OALIGNOF, ir.OOFFSETOF, ir.OSIZEOF:
 			// This corresponds to the EvalConst() call near end of typecheck().
 			return typecheck.EvalConst(u1)
-		case ir.OCLOSE, ir.ONEW:
+		case ir.OCLOSE, ir.ONEW, ir.OUNSAFESTRINGDATA, ir.OUNSAFESLICEDATA:
 			// nothing more to do
 			return u1
 		}
 
-	case ir.OCOMPLEX, ir.OCOPY, ir.OUNSAFEADD, ir.OUNSAFESLICE:
+	case ir.OCOMPLEX, ir.OCOPY, ir.OUNSAFEADD, ir.OUNSAFESLICE, ir.OUNSAFESTRING:
 		transformArgs(n)
 		b := ir.NewBinaryExpr(n.Pos(), op, n.Args[0], n.Args[1])
 		n1 := typed(n.Type(), ir.InitExpr(n.Init(), b))
@@ -987,13 +1046,7 @@ func transformCompLit(n *ir.CompLitExpr) (res ir.Node) {
 				kv := l.(*ir.KeyExpr)
 				key := kv.Key
 
-				// Sym might have resolved to name in other top-level
-				// package, because of import dot. Redirect to correct sym
-				// before we do the lookup.
 				s := key.Sym()
-				if id, ok := key.(*ir.Ident); ok && typecheck.DotImportRefs[id] != nil {
-					s = typecheck.Lookup(s.Name)
-				}
 				if types.IsExported(s.Name) && s.Pkg != types.LocalPkg {
 					// Exported field names should always have
 					// local pkg. We only need to do this

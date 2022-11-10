@@ -94,6 +94,12 @@ type missingValType struct{}
 
 var missingVal = reflect.ValueOf(missingValType{})
 
+var missingValReflectType = reflect.TypeOf(missingValType{})
+
+func isMissing(v reflect.Value) bool {
+	return v.IsValid() && v.Type() == missingValReflectType
+}
+
 // at marks the state to be on node n, for error reporting.
 func (s *state) at(node parse.Node) {
 	s.node = node
@@ -126,7 +132,7 @@ func (e ExecError) Unwrap() error {
 }
 
 // errorf records an ExecError and terminates processing.
-func (s *state) errorf(format string, args ...interface{}) {
+func (s *state) errorf(format string, args ...any) {
 	name := doublePercent(s.tmpl.Name())
 	if s.node == nil {
 		format = fmt.Sprintf("template: %s: %s", name, format)
@@ -179,7 +185,7 @@ func errRecover(errp *error) {
 // the output writer.
 // A template may be executed safely in parallel, although if parallel
 // executions share a Writer the output may be interleaved.
-func (t *Template) ExecuteTemplate(wr io.Writer, name string, data interface{}) error {
+func (t *Template) ExecuteTemplate(wr io.Writer, name string, data any) error {
 	tmpl := t.Lookup(name)
 	if tmpl == nil {
 		return fmt.Errorf("template: no template %q associated with template %q", name, t.name)
@@ -197,11 +203,11 @@ func (t *Template) ExecuteTemplate(wr io.Writer, name string, data interface{}) 
 //
 // If data is a reflect.Value, the template applies to the concrete
 // value that the reflect.Value holds, as in fmt.Print.
-func (t *Template) Execute(wr io.Writer, data interface{}) error {
+func (t *Template) Execute(wr io.Writer, data any) error {
 	return t.execute(wr, data)
 }
 
-func (t *Template) execute(wr io.Writer, data interface{}) (err error) {
+func (t *Template) execute(wr io.Writer, data any) (err error) {
 	defer errRecover(&err)
 	value, ok := data.(reflect.Value)
 	if !ok {
@@ -311,7 +317,7 @@ func (s *state) walkIfOrWith(typ parse.NodeType, dot reflect.Value, pipe *parse.
 // IsTrue reports whether the value is 'true', in the sense of not the zero of its type,
 // and whether the value has a meaningful truth value. This is the definition of
 // truth used by if and other such actions.
-func IsTrue(val interface{}) (truth, ok bool) {
+func IsTrue(val any) (truth, ok bool) {
 	return isTrue(reflect.ValueOf(val))
 }
 
@@ -357,11 +363,19 @@ func (s *state) walkRange(dot reflect.Value, r *parse.RangeNode) {
 	oneIteration := func(index, elem reflect.Value) {
 		// Set top var (lexically the second if there are two) to the element.
 		if len(r.Pipe.Decl) > 0 {
-			s.setTopVar(1, elem)
+			if r.Pipe.IsAssign {
+				s.setVar(r.Pipe.Decl[0].Ident[0], elem)
+			} else {
+				s.setTopVar(1, elem)
+			}
 		}
 		// Set next var (lexically the first if there are two) to the index.
 		if len(r.Pipe.Decl) > 1 {
-			s.setTopVar(2, index)
+			if r.Pipe.IsAssign {
+				s.setVar(r.Pipe.Decl[1].Ident[0], index)
+			} else {
+				s.setTopVar(2, index)
+			}
 		}
 		defer s.pop(mark)
 		defer func() {
@@ -471,7 +485,7 @@ func (s *state) evalPipeline(dot reflect.Value, pipe *parse.PipeNode) (value ref
 }
 
 func (s *state) notAFunction(args []parse.Node, final reflect.Value) {
-	if len(args) > 1 || final != missingVal {
+	if len(args) > 1 || !isMissing(final) {
 		s.errorf("can't give argument to non-function %s", args[0])
 	}
 }
@@ -629,7 +643,7 @@ func (s *state) evalField(dot reflect.Value, fieldName string, node parse.Node, 
 	if method := ptr.MethodByName(fieldName); method.IsValid() {
 		return s.evalCall(dot, method, false, node, fieldName, args, final)
 	}
-	hasArgs := len(args) > 1 || final != missingVal
+	hasArgs := len(args) > 1 || !isMissing(final)
 	// It's not a method; must be a field of a struct or an element of a map.
 	switch receiver.Kind() {
 	case reflect.Struct:
@@ -700,7 +714,7 @@ func (s *state) evalCall(dot, fun reflect.Value, isBuiltin bool, node parse.Node
 	}
 	typ := fun.Type()
 	numIn := len(args)
-	if final != missingVal {
+	if !isMissing(final) {
 		numIn++
 	}
 	numFixed := len(args)
@@ -763,7 +777,7 @@ func (s *state) evalCall(dot, fun reflect.Value, isBuiltin bool, node parse.Node
 		}
 	}
 	// Add final value if necessary.
-	if final != missingVal {
+	if !isMissing(final) {
 		t := typ.In(typ.NumIn() - 1)
 		if typ.IsVariadic() {
 			if numIn-1 < numFixed {
@@ -1023,7 +1037,7 @@ func (s *state) printValue(n parse.Node, v reflect.Value) {
 
 // printableValue returns the, possibly indirected, interface value inside v that
 // is best for a call to formatted printer.
-func printableValue(v reflect.Value) (interface{}, bool) {
+func printableValue(v reflect.Value) (any, bool) {
 	if v.Kind() == reflect.Pointer {
 		v, _ = indirect(v) // fmt.Fprint handles nil.
 	}

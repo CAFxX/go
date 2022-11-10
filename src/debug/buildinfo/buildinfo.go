@@ -15,6 +15,7 @@ import (
 	"debug/elf"
 	"debug/macho"
 	"debug/pe"
+	"debug/plan9obj"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -75,8 +76,8 @@ func Read(r io.ReaderAt) (*BuildInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	bi := &BuildInfo{}
-	if err := bi.UnmarshalText([]byte(mod)); err != nil {
+	bi, err := debug.ParseBuildInfo(mod)
+	if err != nil {
 		return nil, err
 	}
 	bi.GoVersion = vers
@@ -130,6 +131,12 @@ func readRawBuildInfo(r io.ReaderAt) (vers, mod string, err error) {
 			return "", "", errUnrecognizedFormat
 		}
 		x = &xcoffExe{f}
+	case hasPlan9Magic(ident):
+		f, err := plan9obj.NewFile(r)
+		if err != nil {
+			return "", "", errUnrecognizedFormat
+		}
+		x = &plan9objExe{f}
 	default:
 		return "", "", errUnrecognizedFormat
 	}
@@ -146,12 +153,18 @@ func readRawBuildInfo(r io.ReaderAt) (vers, mod string, err error) {
 	}
 	const (
 		buildInfoAlign = 16
-		buildinfoSize  = 32
+		buildInfoSize  = 32
 	)
-	for ; !bytes.HasPrefix(data, buildInfoMagic); data = data[buildInfoAlign:] {
-		if len(data) < 32 {
+	for {
+		i := bytes.Index(data, buildInfoMagic)
+		if i < 0 || len(data)-i < buildInfoSize {
 			return "", "", errNotGoExe
 		}
+		if i%buildInfoAlign == 0 && len(data)-i >= buildInfoSize {
+			data = data[i:]
+			break
+		}
+		data = data[(i+buildInfoAlign-1)&^(buildInfoAlign-1):]
 	}
 
 	// Decode the blob.
@@ -161,25 +174,33 @@ func readRawBuildInfo(r io.ReaderAt) (vers, mod string, err error) {
 	// Two virtual addresses to Go strings follow that: runtime.buildVersion,
 	// and runtime.modinfo.
 	// On 32-bit platforms, the last 8 bytes are unused.
+	// If the endianness has the 2 bit set, then the pointers are zero
+	// and the 32-byte header is followed by varint-prefixed string data
+	// for the two string values we care about.
 	ptrSize := int(data[14])
-	bigEndian := data[15] != 0
-	var bo binary.ByteOrder
-	if bigEndian {
-		bo = binary.BigEndian
+	if data[15]&2 != 0 {
+		vers, data = decodeString(data[32:])
+		mod, data = decodeString(data)
 	} else {
-		bo = binary.LittleEndian
+		bigEndian := data[15] != 0
+		var bo binary.ByteOrder
+		if bigEndian {
+			bo = binary.BigEndian
+		} else {
+			bo = binary.LittleEndian
+		}
+		var readPtr func([]byte) uint64
+		if ptrSize == 4 {
+			readPtr = func(b []byte) uint64 { return uint64(bo.Uint32(b)) }
+		} else {
+			readPtr = bo.Uint64
+		}
+		vers = readString(x, ptrSize, readPtr, readPtr(data[16:]))
+		mod = readString(x, ptrSize, readPtr, readPtr(data[16+ptrSize:]))
 	}
-	var readPtr func([]byte) uint64
-	if ptrSize == 4 {
-		readPtr = func(b []byte) uint64 { return uint64(bo.Uint32(b)) }
-	} else {
-		readPtr = bo.Uint64
-	}
-	vers = readString(x, ptrSize, readPtr, readPtr(data[16:]))
 	if vers == "" {
 		return "", "", errNotGoExe
 	}
-	mod = readString(x, ptrSize, readPtr, readPtr(data[16+ptrSize:]))
 	if len(mod) >= 33 && mod[len(mod)-17] == '\n' {
 		// Strip module framing: sentinel strings delimiting the module info.
 		// These are cmd/go/internal/modload.infoStart and infoEnd.
@@ -189,6 +210,25 @@ func readRawBuildInfo(r io.ReaderAt) (vers, mod string, err error) {
 	}
 
 	return vers, mod, nil
+}
+
+func hasPlan9Magic(magic []byte) bool {
+	if len(magic) >= 4 {
+		m := binary.BigEndian.Uint32(magic)
+		switch m {
+		case plan9obj.Magic386, plan9obj.MagicAMD64, plan9obj.MagicARM:
+			return true
+		}
+	}
+	return false
+}
+
+func decodeString(data []byte) (s string, rest []byte) {
+	u, n := binary.Uvarint(data)
+	if n <= 0 || u >= uint64(len(data)-n) {
+		return "", nil
+	}
+	return string(data[n : uint64(n)+u]), data[uint64(n)+u:]
 }
 
 // readString returns the string at address addr in the executable x.
@@ -354,22 +394,56 @@ type xcoffExe struct {
 
 func (x *xcoffExe) ReadData(addr, size uint64) ([]byte, error) {
 	for _, sect := range x.f.Sections {
-		if uint64(sect.VirtualAddress) <= addr && addr <= uint64(sect.VirtualAddress+sect.Size-1) {
-			n := uint64(sect.VirtualAddress+sect.Size) - addr
+		if sect.VirtualAddress <= addr && addr <= sect.VirtualAddress+sect.Size-1 {
+			n := sect.VirtualAddress + sect.Size - addr
 			if n > size {
 				n = size
 			}
 			data := make([]byte, n)
-			_, err := sect.ReadAt(data, int64(addr-uint64(sect.VirtualAddress)))
+			_, err := sect.ReadAt(data, int64(addr-sect.VirtualAddress))
 			if err != nil {
 				return nil, err
 			}
 			return data, nil
 		}
 	}
-	return nil, fmt.Errorf("address not mapped")
+	return nil, errors.New("address not mapped")
 }
 
 func (x *xcoffExe) DataStart() uint64 {
-	return x.f.SectionByType(xcoff.STYP_DATA).VirtualAddress
+	if s := x.f.SectionByType(xcoff.STYP_DATA); s != nil {
+		return s.VirtualAddress
+	}
+	return 0
+}
+
+// plan9objExe is the Plan 9 a.out implementation of the exe interface.
+type plan9objExe struct {
+	f *plan9obj.File
+}
+
+func (x *plan9objExe) DataStart() uint64 {
+	if s := x.f.Section("data"); s != nil {
+		return uint64(s.Offset)
+	}
+	return 0
+}
+
+func (x *plan9objExe) ReadData(addr, size uint64) ([]byte, error) {
+	for _, sect := range x.f.Sections {
+		if uint64(sect.Offset) <= addr && addr <= uint64(sect.Offset+sect.Size-1) {
+			n := uint64(sect.Offset+sect.Size) - addr
+			if n > size {
+				n = size
+			}
+			data := make([]byte, n)
+			_, err := sect.ReadAt(data, int64(addr-uint64(sect.Offset)))
+			if err != nil {
+				return nil, err
+			}
+			return data, nil
+		}
+	}
+	return nil, errors.New("address not mapped")
+
 }

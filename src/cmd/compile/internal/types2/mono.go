@@ -6,6 +6,7 @@ package types2
 
 import (
 	"cmd/compile/internal/syntax"
+	. "internal/types/errors"
 )
 
 // This file implements a check to validate that a Go package doesn't
@@ -137,6 +138,7 @@ func (check *Checker) reportInstanceLoop(v int) {
 	// TODO(mdempsky): Pivot stack so we report the cycle from the top?
 
 	var err error_
+	err.code = InvalidInstanceCycle
 	obj0 := check.mono.vertices[v].obj
 	err.errorf(obj0, "instantiation cycle:")
 
@@ -168,11 +170,11 @@ func (w *monoGraph) recordCanon(mpar, tpar *TypeParam) {
 
 // recordInstance records that the given type parameters were
 // instantiated with the corresponding type arguments.
-func (w *monoGraph) recordInstance(pkg *Package, pos syntax.Pos, tparams []*TypeParam, targs []Type, posList []syntax.Pos) {
+func (w *monoGraph) recordInstance(pkg *Package, pos syntax.Pos, tparams []*TypeParam, targs []Type, xlist []syntax.Expr) {
 	for i, tpar := range tparams {
 		pos := pos
-		if i < len(posList) {
-			pos = posList[i]
+		if i < len(xlist) {
+			pos = syntax.StartPos(xlist[i])
 		}
 		w.assign(pkg, pos, tpar, targs[i])
 	}

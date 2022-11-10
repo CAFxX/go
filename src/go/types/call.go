@@ -10,6 +10,7 @@ import (
 	"go/ast"
 	"go/internal/typeparams"
 	"go/token"
+	. "internal/types/errors"
 	"strings"
 	"unicode"
 )
@@ -18,7 +19,7 @@ import (
 // The operand x must be the evaluation of inst.X and its type must be a signature.
 func (check *Checker) funcInst(x *operand, ix *typeparams.IndexExpr) {
 	if !check.allowVersion(check.pkg, 1, 18) {
-		check.softErrorf(inNode(ix.Orig, ix.Lbrack), _Todo, "function instantiation requires go1.18 or later")
+		check.softErrorf(inNode(ix.Orig, ix.Lbrack), UnsupportedFeature, "function instantiation requires go1.18 or later")
 	}
 
 	targs := check.typeList(ix.Indices)
@@ -33,7 +34,7 @@ func (check *Checker) funcInst(x *operand, ix *typeparams.IndexExpr) {
 	sig := x.typ.(*Signature)
 	got, want := len(targs), sig.TypeParams().Len()
 	if got > want {
-		check.errorf(ix.Indices[got-1], _Todo, "got %d type arguments but want %d", got, want)
+		check.errorf(ix.Indices[got-1], WrongTypeArgCount, "got %d type arguments but want %d", got, want)
 		x.mode = invalid
 		x.expr = ix.Orig
 		return
@@ -51,16 +52,8 @@ func (check *Checker) funcInst(x *operand, ix *typeparams.IndexExpr) {
 	}
 	assert(got == want)
 
-	// determine argument positions (for error reporting)
-	// TODO(rFindley) use a positioner here? instantiate would need to be
-	//                updated accordingly.
-	poslist := make([]token.Pos, len(ix.Indices))
-	for i, x := range ix.Indices {
-		poslist[i] = x.Pos()
-	}
-
 	// instantiate function signature
-	res := check.instantiateSignature(x.Pos(), sig, targs, poslist)
+	res := check.instantiateSignature(x.Pos(), sig, targs, ix.Indices)
 	assert(res.TypeParams().Len() == 0) // signature is not generic anymore
 	check.recordInstance(ix.Orig, targs, res)
 	x.typ = res
@@ -68,12 +61,12 @@ func (check *Checker) funcInst(x *operand, ix *typeparams.IndexExpr) {
 	x.expr = ix.Orig
 }
 
-func (check *Checker) instantiateSignature(pos token.Pos, typ *Signature, targs []Type, posList []token.Pos) (res *Signature) {
+func (check *Checker) instantiateSignature(pos token.Pos, typ *Signature, targs []Type, xlist []ast.Expr) (res *Signature) {
 	assert(check != nil)
 	assert(len(targs) == typ.TypeParams().Len())
 
 	if trace {
-		check.trace(pos, "-- instantiating %s with %s", typ, targs)
+		check.trace(pos, "-- instantiating signature %s with %s", typ, targs)
 		check.indent++
 		defer func() {
 			check.indent--
@@ -81,19 +74,23 @@ func (check *Checker) instantiateSignature(pos token.Pos, typ *Signature, targs 
 		}()
 	}
 
-	inst := check.instance(pos, typ, targs, check.conf.Context).(*Signature)
-	assert(len(posList) <= len(targs))
-	tparams := typ.TypeParams().list()
-	if i, err := check.verify(pos, tparams, targs); err != nil {
-		// best position for error reporting
-		pos := pos
-		if i < len(posList) {
-			pos = posList[i]
+	inst := check.instance(pos, typ, targs, nil, check.context()).(*Signature)
+	assert(len(xlist) <= len(targs))
+
+	// verify instantiation lazily (was issue #50450)
+	check.later(func() {
+		tparams := typ.TypeParams().list()
+		if i, err := check.verify(pos, tparams, targs, check.context()); err != nil {
+			// best position for error reporting
+			pos := pos
+			if i < len(xlist) {
+				pos = xlist[i].Pos()
+			}
+			check.softErrorf(atPos(pos), InvalidTypeArg, "%s", err)
+		} else {
+			check.mono.recordInstance(check.pkg, pos, tparams, targs, xlist)
 		}
-		check.softErrorf(atPos(pos), _Todo, err.Error())
-	} else {
-		check.mono.recordInstance(check.pkg, pos, tparams, targs, posList)
-	}
+	}).describef(atPos(pos), "verify instantiation")
 
 	return inst
 }
@@ -133,17 +130,17 @@ func (check *Checker) callExpr(x *operand, call *ast.CallExpr) exprKind {
 		x.mode = invalid
 		switch n := len(call.Args); n {
 		case 0:
-			check.errorf(inNode(call, call.Rparen), _WrongArgCount, "missing argument in conversion to %s", T)
+			check.errorf(inNode(call, call.Rparen), WrongArgCount, "missing argument in conversion to %s", T)
 		case 1:
 			check.expr(x, call.Args[0])
 			if x.mode != invalid {
 				if call.Ellipsis.IsValid() {
-					check.errorf(call.Args[0], _BadDotDotDotSyntax, "invalid use of ... in conversion to %s", T)
+					check.errorf(call.Args[0], BadDotDotDotSyntax, "invalid use of ... in conversion to %s", T)
 					break
 				}
-				if t := asInterface(T); t != nil {
+				if t, _ := under(T).(*Interface); t != nil && !isTypeParam(T) {
 					if !t.IsMethodSet() {
-						check.errorf(call, _Todo, "cannot use interface %s in conversion (contains specific type constraints or is comparable)", T)
+						check.errorf(call, MisplacedConstraintIface, "cannot use interface %s in conversion (contains specific type constraints or is comparable)", T)
 						break
 					}
 				}
@@ -151,7 +148,7 @@ func (check *Checker) callExpr(x *operand, call *ast.CallExpr) exprKind {
 			}
 		default:
 			check.use(call.Args...)
-			check.errorf(call.Args[n-1], _WrongArgCount, "too many arguments in conversion to %s", T)
+			check.errorf(call.Args[n-1], WrongArgCount, "too many arguments in conversion to %s", T)
 		}
 		x.expr = call
 		return conversion
@@ -175,30 +172,32 @@ func (check *Checker) callExpr(x *operand, call *ast.CallExpr) exprKind {
 	cgocall := x.mode == cgofunc
 
 	// a type parameter may be "called" if all types have the same signature
-	sig, _ := structure(x.typ).(*Signature)
+	sig, _ := coreType(x.typ).(*Signature)
 	if sig == nil {
-		check.invalidOp(x, _InvalidCall, "cannot call non-function %s", x)
+		check.errorf(x, InvalidCall, invalidOp+"cannot call non-function %s", x)
 		x.mode = invalid
 		x.expr = call
 		return statement
 	}
 
 	// evaluate type arguments, if any
+	var xlist []ast.Expr
 	var targs []Type
 	if ix != nil {
-		targs = check.typeList(ix.Indices)
+		xlist = ix.Indices
+		targs = check.typeList(xlist)
 		if targs == nil {
 			check.use(call.Args...)
 			x.mode = invalid
 			x.expr = call
 			return statement
 		}
-		assert(len(targs) == len(ix.Indices))
+		assert(len(targs) == len(xlist))
 
 		// check number of type arguments (got) vs number of type parameters (want)
 		got, want := len(targs), sig.TypeParams().Len()
 		if got > want {
-			check.errorf(ix.Indices[want], _Todo, "got %d type arguments but want %d", got, want)
+			check.errorf(xlist[want], WrongTypeArgCount, "got %d type arguments but want %d", got, want)
 			check.use(call.Args...)
 			x.mode = invalid
 			x.expr = call
@@ -209,7 +208,7 @@ func (check *Checker) callExpr(x *operand, call *ast.CallExpr) exprKind {
 	// evaluate arguments
 	args, _ := check.exprList(call.Args, false)
 	isGeneric := sig.TypeParams().Len() > 0
-	sig = check.arguments(call, sig, targs, args)
+	sig = check.arguments(call, sig, targs, args, xlist)
 
 	if isGeneric && sig.TypeParams().Len() == 0 {
 		// Update the recorded type of call.Fun to its instantiated type.
@@ -286,14 +285,15 @@ func (check *Checker) exprList(elist []ast.Expr, allowCommaOk bool) (xlist []*op
 	return
 }
 
-func (check *Checker) arguments(call *ast.CallExpr, sig *Signature, targs []Type, args []*operand) (rsig *Signature) {
+// xlist is the list of type argument expressions supplied in the source code.
+func (check *Checker) arguments(call *ast.CallExpr, sig *Signature, targs []Type, args []*operand, xlist []ast.Expr) (rsig *Signature) {
 	rsig = sig
 
 	// TODO(gri) try to eliminate this extra verification loop
 	for _, a := range args {
 		switch a.mode {
 		case typexpr:
-			check.errorf(a, 0, "%s used as value", a)
+			check.errorf(a, NotAnExpr, "%s used as value", a)
 			return
 		case invalid:
 			return
@@ -321,7 +321,7 @@ func (check *Checker) arguments(call *ast.CallExpr, sig *Signature, targs []Type
 			// variadic_func(a, b, c...)
 			if len(call.Args) == 1 && nargs > 1 {
 				// f()... is not permitted if f() is multi-valued
-				check.errorf(inNode(call, call.Ellipsis), _InvalidDotDotDot, "cannot use ... with %d-valued %s", nargs, call.Args[0])
+				check.errorf(inNode(call, call.Ellipsis), InvalidDotDotDot, "cannot use ... with %d-valued %s", nargs, call.Args[0])
 				return
 			}
 		} else {
@@ -348,19 +348,31 @@ func (check *Checker) arguments(call *ast.CallExpr, sig *Signature, targs []Type
 	} else {
 		if ddd {
 			// standard_func(a, b, c...)
-			check.errorf(inNode(call, call.Ellipsis), _NonVariadicDotDotDot, "cannot use ... in call to non-variadic %s", call.Fun)
+			check.errorf(inNode(call, call.Ellipsis), NonVariadicDotDotDot, "cannot use ... in call to non-variadic %s", call.Fun)
 			return
 		}
 		// standard_func(a, b, c)
 	}
 
 	// check argument count
-	switch {
-	case nargs < npars:
-		check.errorf(inNode(call, call.Rparen), _WrongArgCount, "not enough arguments in call to %s", call.Fun)
-		return
-	case nargs > npars:
-		check.errorf(args[npars], _WrongArgCount, "too many arguments in call to %s", call.Fun) // report at first extra argument
+	if nargs != npars {
+		var at positioner = call
+		qualifier := "not enough"
+		if nargs > npars {
+			at = args[npars].expr // report at first extra argument
+			qualifier = "too many"
+		} else {
+			at = atPos(call.Rparen) // report at closing )
+		}
+		// take care of empty parameter lists represented by nil tuples
+		var params []*Var
+		if sig.params != nil {
+			params = sig.params.vars
+		}
+		err := newErrorf(at, WrongArgCount, "%s arguments in call to %s", qualifier, call.Fun)
+		err.errorf(token.NoPos, "have %s", check.typesSummary(operandTypes(args), false))
+		err.errorf(token.NoPos, "want %s", check.typesSummary(varTypes(params), sig.variadic))
+		check.report(err)
 		return
 	}
 
@@ -370,20 +382,18 @@ func (check *Checker) arguments(call *ast.CallExpr, sig *Signature, targs []Type
 			switch call.Fun.(type) {
 			case *ast.IndexExpr, *ast.IndexListExpr:
 				ix := typeparams.UnpackIndexExpr(call.Fun)
-				check.softErrorf(inNode(call.Fun, ix.Lbrack), _Todo, "function instantiation requires go1.18 or later")
+				check.softErrorf(inNode(call.Fun, ix.Lbrack), UnsupportedFeature, "function instantiation requires go1.18 or later")
 			default:
-				check.softErrorf(inNode(call, call.Lparen), _Todo, "implicit function instantiation requires go1.18 or later")
+				check.softErrorf(inNode(call, call.Lparen), UnsupportedFeature, "implicit function instantiation requires go1.18 or later")
 			}
 		}
-		// TODO(gri) provide position information for targs so we can feed
-		//           it to the instantiate call for better error reporting
 		targs := check.infer(call, sig.TypeParams().list(), targs, sigParams, args)
 		if targs == nil {
 			return // error already reported
 		}
 
 		// compute result signature
-		rsig = check.instantiateSignature(call.Pos(), sig, targs, nil)
+		rsig = check.instantiateSignature(call.Pos(), sig, targs, xlist)
 		assert(rsig.TypeParams().Len() == 0) // signature is not generic anymore
 		check.recordInstance(call.Fun, targs, rsig)
 
@@ -391,7 +401,7 @@ func (check *Checker) arguments(call *ast.CallExpr, sig *Signature, targs []Type
 		// need to compute it from the adjusted list; otherwise we can
 		// simply use the result signature's parameter list.
 		if adjusted {
-			sigParams = check.subst(call.Pos(), sigParams, makeSubstMap(sig.TypeParams().list(), targs), nil).(*Tuple)
+			sigParams = check.subst(call.Pos(), sigParams, makeSubstMap(sig.TypeParams().list(), targs), nil, check.context()).(*Tuple)
 		} else {
 			sigParams = rsig.params
 		}
@@ -419,7 +429,7 @@ var cgoPrefixes = [...]string{
 	"_Cmacro_", // function to evaluate the expanded expression
 }
 
-func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
+func (check *Checker) selector(x *operand, e *ast.SelectorExpr, def *Named) {
 	// these must be declared before the "goto Error" statements
 	var (
 		obj      Object
@@ -460,7 +470,7 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 					}
 				}
 				if exp == nil {
-					check.errorf(e.Sel, _UndeclaredImportedName, "%s not declared by package C", sel)
+					check.errorf(e.Sel, UndeclaredImportedName, "undefined: %s", ast.Expr(e)) // cast to ast.Expr to silence vet
 					goto Error
 				}
 				check.objDecl(exp, nil)
@@ -468,12 +478,12 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 				exp = pkg.scope.Lookup(sel)
 				if exp == nil {
 					if !pkg.fake {
-						check.errorf(e.Sel, _UndeclaredImportedName, "%s not declared by package %s", sel, pkg.name)
+						check.errorf(e.Sel, UndeclaredImportedName, "undefined: %s", ast.Expr(e))
 					}
 					goto Error
 				}
 				if !exp.Exported() {
-					check.errorf(e.Sel, _UnexportedName, "%s not exported by package %s", sel, pkg.name)
+					check.errorf(e.Sel, UnexportedName, "%s not exported by package %s", sel, pkg.name)
 					// ok to continue
 				}
 			}
@@ -517,32 +527,48 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 	}
 
 	check.exprOrType(x, e.X, false)
-	if x.mode == invalid {
+	switch x.mode {
+	case typexpr:
+		// don't crash for "type T T.x" (was issue #51509)
+		if def != nil && x.typ == def {
+			check.cycleError([]Object{def.obj})
+			goto Error
+		}
+	case builtin:
+		// types2 uses the position of '.' for the error
+		check.errorf(e.Sel, UncalledBuiltin, "cannot select on %s", x)
+		goto Error
+	case invalid:
 		goto Error
 	}
 
 	obj, index, indirect = LookupFieldOrMethod(x.typ, x.mode == variable, check.pkg, sel)
 	if obj == nil {
-		switch {
-		case index != nil:
-			// TODO(gri) should provide actual type where the conflict happens
-			check.errorf(e.Sel, _AmbiguousSelector, "ambiguous selector %s.%s", x.expr, sel)
-		case indirect:
-			check.errorf(e.Sel, _InvalidMethodExpr, "cannot call pointer method %s on %s", sel, x.typ)
-		default:
-			var why string
-			if tpar := asTypeParam(x.typ); tpar != nil {
-				// Type parameter bounds don't specify fields, so don't mention "field".
-				if tname := tpar.iface().obj; tname != nil {
-					why = check.sprintf("interface %s has no method %s", tname.name, sel)
-				} else {
-					why = check.sprintf("type bound for %s has no method %s", x.typ, sel)
-				}
-			} else {
-				why = check.sprintf("type %s has no field or method %s", x.typ, sel)
-			}
+		// Don't report another error if the underlying type was invalid (issue #49541).
+		if under(x.typ) == Typ[Invalid] {
+			goto Error
+		}
 
+		if index != nil {
+			// TODO(gri) should provide actual type where the conflict happens
+			check.errorf(e.Sel, AmbiguousSelector, "ambiguous selector %s.%s", x.expr, sel)
+			goto Error
+		}
+
+		if indirect {
+			check.errorf(e.Sel, InvalidMethodExpr, "cannot call pointer method %s on %s", sel, x.typ)
+			goto Error
+		}
+
+		var why string
+		if isInterfacePtr(x.typ) {
+			why = check.interfacePtrError(x.typ)
+		} else {
+			why = check.sprintf("type %s has no field or method %s", x.typ, sel)
 			// Check if capitalization of sel matters and provide better error message in that case.
+			// TODO(gri) This code only looks at the first character but LookupFieldOrMethod should
+			//           have an (internal) mechanism for case-insensitive lookup that we should use
+			//           instead (see types2).
 			if len(sel) > 0 {
 				var changeCase string
 				if r := rune(sel[0]); unicode.IsUpper(r) {
@@ -554,9 +580,8 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 					why += ", but does have " + changeCase
 				}
 			}
-
-			check.errorf(e.Sel, _MissingFieldOrMethod, "%s.%s undefined (%s)", x.expr, sel, why)
 		}
+		check.errorf(e.Sel, MissingFieldOrMethod, "%s.%s undefined (%s)", x.expr, sel, why)
 		goto Error
 	}
 
@@ -570,7 +595,7 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 		m, _ := obj.(*Func)
 		if m == nil {
 			// TODO(gri) should check if capitalization of sel matters and provide better error message in that case
-			check.errorf(e.Sel, _MissingFieldOrMethod, "%s.%s undefined (type %s has no method %s)", x.expr, sel, x.typ, sel)
+			check.errorf(e.Sel, MissingFieldOrMethod, "%s.%s undefined (type %s has no method %s)", x.expr, sel, x.typ, sel)
 			goto Error
 		}
 
@@ -578,7 +603,7 @@ func (check *Checker) selector(x *operand, e *ast.SelectorExpr) {
 
 		sig := m.typ.(*Signature)
 		if sig.recv == nil {
-			check.error(e, _InvalidDeclCycle, "illegal cycle in method declaration")
+			check.error(e, InvalidDeclCycle, "illegal cycle in method declaration")
 			goto Error
 		}
 

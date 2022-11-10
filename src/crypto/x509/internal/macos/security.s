@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build darwin && !ios
+//go:build darwin
 
 #include "textflag.h"
 
@@ -11,12 +11,8 @@
 
 TEXT ·x509_SecTrustSettingsCopyCertificates_trampoline(SB),NOSPLIT,$0-0
 	JMP	x509_SecTrustSettingsCopyCertificates(SB)
-TEXT ·x509_SecItemExport_trampoline(SB),NOSPLIT,$0-0
-	JMP	x509_SecItemExport(SB)
 TEXT ·x509_SecTrustSettingsCopyTrustSettings_trampoline(SB),NOSPLIT,$0-0
 	JMP	x509_SecTrustSettingsCopyTrustSettings(SB)
-TEXT ·x509_SecPolicyCopyProperties_trampoline(SB),NOSPLIT,$0-0
-	JMP	x509_SecPolicyCopyProperties(SB)
 TEXT ·x509_SecTrustCreateWithCertificates_trampoline(SB),NOSPLIT,$0-0
 	JMP x509_SecTrustCreateWithCertificates(SB)
 TEXT ·x509_SecCertificateCreateWithData_trampoline(SB),NOSPLIT,$0-0
@@ -35,3 +31,5 @@ TEXT ·x509_SecTrustGetCertificateCount_trampoline(SB),NOSPLIT,$0-0
 	JMP x509_SecTrustGetCertificateCount(SB)
 TEXT ·x509_SecTrustGetCertificateAtIndex_trampoline(SB),NOSPLIT,$0-0
 	JMP x509_SecTrustGetCertificateAtIndex(SB)
+TEXT ·x509_SecCertificateCopyData_trampoline(SB),NOSPLIT,$0-0
+	JMP x509_SecCertificateCopyData(SB)

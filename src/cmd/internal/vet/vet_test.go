@@ -21,8 +21,6 @@ import (
 	"testing"
 )
 
-const dataDir = "testdata"
-
 var binary string
 
 // We implement TestMain so remove the test binary when all is done.
@@ -269,7 +267,7 @@ func errorCheck(outStr string, wantAuto bool, fullshort ...string) (err error) {
 	if len(errs) == 1 {
 		return errs[0]
 	}
-	var buf bytes.Buffer
+	var buf strings.Builder
 	fmt.Fprintf(&buf, "\n")
 	for _, err := range errs {
 		fmt.Fprintf(&buf, "%s\n", err.Error())
@@ -337,7 +335,7 @@ var (
 	errRx       = regexp.MustCompile(`// (?:GC_)?ERROR(NEXT)? (.*)`)
 	errAutoRx   = regexp.MustCompile(`// (?:GC_)?ERRORAUTO(NEXT)? (.*)`)
 	errQuotesRx = regexp.MustCompile(`"([^"]*)"`)
-	lineRx      = regexp.MustCompile(`LINE(([+-])([0-9]+))?`)
+	lineRx      = regexp.MustCompile(`LINE(([+-])(\d+))?`)
 )
 
 // wantedErrors parses expected errors from comments in a file.

@@ -14,7 +14,7 @@ import (
 )
 
 func ExampleKind() {
-	for _, v := range []interface{}{"hi", 42, func() {}} {
+	for _, v := range []any{"hi", 42, func() {}} {
 		switch v := reflect.ValueOf(v); v.Kind() {
 		case reflect.String:
 			fmt.Println(v.String())
@@ -45,7 +45,7 @@ func ExampleMakeFunc() {
 	// When the function is invoked, reflect turns the arguments
 	// into Values, calls swap, and then turns swap's result slice
 	// into the values returned by the new function.
-	makeSwap := func(fptr interface{}) {
+	makeSwap := func(fptr any) {
 		// fptr is a pointer to a function.
 		// Obtain the function value itself (likely nil) as a reflect.Value
 		// so that we can query its type and then set the value.
@@ -193,4 +193,17 @@ func ExampleValue_FieldByIndex() {
 
 	// Output:
 	// embedded last name: Embedded Doe
+}
+
+func ExampleValue_FieldByName() {
+	type user struct {
+		firstName string
+		lastName  string
+	}
+	u := user{firstName: "John", lastName: "Doe"}
+	s := reflect.ValueOf(u)
+
+	fmt.Println("Name:", s.FieldByName("firstName"))
+	// Output:
+	// Name: John
 }

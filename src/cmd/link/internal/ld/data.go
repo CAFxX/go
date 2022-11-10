@@ -178,7 +178,7 @@ func FoldSubSymbolOffset(ldr *loader.Loader, s loader.Sym) (loader.Sym, int64) {
 // (to be applied by the external linker). For more on how relocations
 // work in general, see
 //
-//  "Linkers and Loaders", by John R. Levine (Morgan Kaufmann, 1999), ch. 7
+//	"Linkers and Loaders", by John R. Levine (Morgan Kaufmann, 1999), ch. 7
 //
 // This is a performance-critical function for the linker; be careful
 // to avoid introducing unnecessary allocations in the main loop.
@@ -215,20 +215,22 @@ func (st *relocSymState) relocsym(s loader.Sym, P []byte) {
 			rst = ldr.SymType(rs)
 		}
 
-		if rs != 0 && ((rst == sym.Sxxx && !ldr.AttrVisibilityHidden(rs)) || rst == sym.SXREF) {
+		if rs != 0 && (rst == sym.Sxxx || rst == sym.SXREF) {
 			// When putting the runtime but not main into a shared library
 			// these symbols are undefined and that's OK.
 			if target.IsShared() || target.IsPlugin() {
 				if ldr.SymName(rs) == "main.main" || (!target.IsPlugin() && ldr.SymName(rs) == "main..inittask") {
 					sb := ldr.MakeSymbolUpdater(rs)
 					sb.SetType(sym.SDYNIMPORT)
-				} else if strings.HasPrefix(ldr.SymName(rs), "go.info.") {
+				} else if strings.HasPrefix(ldr.SymName(rs), "go:info.") {
 					// Skip go.info symbols. They are only needed to communicate
 					// DWARF info between the compiler and linker.
 					continue
 				}
-			} else if target.IsPPC64() && target.IsPIE() && ldr.SymName(rs) == ".TOC." {
-				// This is a TOC relative relocation generated from a go object. It is safe to resolve.
+			} else if target.IsPPC64() && ldr.SymName(rs) == ".TOC." {
+				// TOC symbol doesn't have a type but we do assign a value
+				// (see the address pass) and we can resolve it.
+				// TODO: give it a type.
 			} else {
 				st.err.errorUnresolved(ldr, s, rs)
 				continue
@@ -936,7 +938,7 @@ func writeBlocks(ctxt *Link, out *OutBuf, sem chan int, ldr *loader.Loader, syms
 		length := int64(0)
 		if idx+1 < len(syms) {
 			// Find the next top-level symbol.
-			// Skip over sub symbols so we won't split a containter symbol
+			// Skip over sub symbols so we won't split a container symbol
 			// into two blocks.
 			next := syms[idx+1]
 			for ldr.AttrSubSymbol(next) {
@@ -1072,6 +1074,8 @@ func dwarfblk(ctxt *Link, out *OutBuf, addr int64, size int64) {
 	writeBlocks(ctxt, out, ctxt.outSem, ctxt.loader, syms, addr, size, zeros[:])
 }
 
+var covCounterDataStartOff, covCounterDataLen uint64
+
 var zeros [512]byte
 
 var (
@@ -1106,7 +1110,7 @@ func addstrdata(arch *sys.Arch, l *loader.Loader, name, value string) {
 	}
 	if goType := l.SymGoType(s); goType == 0 {
 		return
-	} else if typeName := l.SymName(goType); typeName != "type.string" {
+	} else if typeName := l.SymName(goType); typeName != "type:string" {
 		Errorf(nil, "%s: cannot set with -X: not a var of type string (%s)", name, typeName)
 		return
 	}
@@ -1123,12 +1127,14 @@ func addstrdata(arch *sys.Arch, l *loader.Loader, name, value string) {
 	sbld.Addstring(value)
 	sbld.SetType(sym.SRODATA)
 
-	bld.SetSize(0)
-	bld.SetData(make([]byte, 0, arch.PtrSize*2))
+	// Don't reset the variable's size. String variable usually has size of
+	// 2*PtrSize, but in ASAN build it can be larger due to red zone.
+	// (See issue 56175.)
+	bld.SetData(make([]byte, arch.PtrSize*2))
 	bld.SetReadOnly(false)
 	bld.ResetRelocs()
-	bld.AddAddrPlus(arch, sbld.Sym(), 0)
-	bld.AddUint(arch, uint64(len(value)))
+	bld.SetAddrPlus(arch, 0, sbld.Sym(), 0)
+	bld.SetUint(arch, int64(arch.PtrSize), uint64(len(value)))
 }
 
 func (ctxt *Link) dostrdata() {
@@ -1779,9 +1785,20 @@ func (state *dodataState) allocateDataSections(ctxt *Link) {
 	ldr.SetSymSect(ldr.LookupOrCreateSym("runtime.enoptrbss", 0), sect)
 	ldr.SetSymSect(ldr.LookupOrCreateSym("runtime.end", 0), sect)
 
+	// Code coverage counters are assigned to the .noptrbss section.
+	// We assign them in a separate pass so that they stay aggregated
+	// together in a single blob (coverage runtime depends on this).
+	covCounterDataStartOff = sect.Length
+	state.assignToSection(sect, sym.SCOVERAGE_COUNTER, sym.SNOPTRBSS)
+	covCounterDataLen = sect.Length - covCounterDataStartOff
+	ldr.SetSymSect(ldr.LookupOrCreateSym("runtime.covctrs", 0), sect)
+	ldr.SetSymSect(ldr.LookupOrCreateSym("runtime.ecovctrs", 0), sect)
+
 	// Coverage instrumentation counters for libfuzzer.
-	if len(state.data[sym.SLIBFUZZER_EXTRA_COUNTER]) > 0 {
-		sect := state.allocateNamedSectionAndAssignSyms(&Segdata, "__libfuzzer_extra_counters", sym.SLIBFUZZER_EXTRA_COUNTER, sym.Sxxx, 06)
+	if len(state.data[sym.SLIBFUZZER_8BIT_COUNTER]) > 0 {
+		sect := state.allocateNamedSectionAndAssignSyms(&Segdata, "__sancov_cntrs", sym.SLIBFUZZER_8BIT_COUNTER, sym.Sxxx, 06)
+		ldr.SetSymSect(ldr.LookupOrCreateSym("__start___sancov_cntrs", 0), sect)
+		ldr.SetSymSect(ldr.LookupOrCreateSym("__stop___sancov_cntrs", 0), sect)
 		ldr.SetSymSect(ldr.LookupOrCreateSym("internal/fuzz._counters", 0), sect)
 		ldr.SetSymSect(ldr.LookupOrCreateSym("internal/fuzz._ecounters", 0), sect)
 	}
@@ -1850,6 +1867,9 @@ func (state *dodataState) allocateDataSections(ctxt *Link) {
 	}
 	for _, symn := range sym.ReadOnly {
 		symnStartValue := state.datsize
+		if len(state.data[symn]) != 0 {
+			symnStartValue = aligndatsize(state, symnStartValue, state.data[symn][0])
+		}
 		state.assignToSection(sect, symn, sym.SRODATA)
 		setCarrierSize(symn, state.datsize-symnStartValue)
 		if ctxt.HeadType == objabi.Haix {
@@ -1931,6 +1951,9 @@ func (state *dodataState) allocateDataSections(ctxt *Link) {
 
 			symn := sym.RelROMap[symnro]
 			symnStartValue := state.datsize
+			if len(state.data[symn]) != 0 {
+				symnStartValue = aligndatsize(state, symnStartValue, state.data[symn][0])
+			}
 
 			for _, s := range state.data[symn] {
 				outer := ldr.OuterSym(s)
@@ -2112,12 +2135,7 @@ func (state *dodataState) dodataSect(ctxt *Link, symn sym.SymKind, syms []loader
 			return si < sj
 		})
 	} else {
-		// PCLNTAB was built internally, and has the proper order based on value.
-		// Sort the symbols as such.
-		for k, s := range syms {
-			sl[k].val = ldr.SymValue(s)
-		}
-		sort.Slice(sl, func(i, j int) bool { return sl[i].val < sl[j].val })
+		// PCLNTAB was built internally, and already has the proper order.
 	}
 
 	// Set alignment, construct result
@@ -2140,14 +2158,14 @@ func (state *dodataState) dodataSect(ctxt *Link, symn sym.SymKind, syms []loader
 // Non-ELF binary formats are not always flexible enough to
 // give us a place to put the Go build ID. On those systems, we put it
 // at the very beginning of the text segment.
-// This ``header'' is read by cmd/go.
+// This “header” is read by cmd/go.
 func (ctxt *Link) textbuildid() {
 	if ctxt.IsELF || ctxt.BuildMode == BuildModePlugin || *flagBuildid == "" {
 		return
 	}
 
 	ldr := ctxt.loader
-	s := ldr.CreateSymForUpdate("go.buildid", 0)
+	s := ldr.CreateSymForUpdate("go:buildid", 0)
 	// The \xff is invalid UTF-8, meant to make it less likely
 	// to find one of these accidentally.
 	data := "\xff Go build ID: " + strconv.Quote(*flagBuildid) + "\n \xff"
@@ -2169,11 +2187,10 @@ func (ctxt *Link) buildinfo() {
 		return
 	}
 
+	// Write the buildinfo symbol, which go version looks for.
+	// The code reading this data is in package debug/buildinfo.
 	ldr := ctxt.loader
 	s := ldr.CreateSymForUpdate(".go.buildinfo", 0)
-	// On AIX, .go.buildinfo must be in the symbol table as
-	// it has relocations.
-	s.SetNotInSymbolTable(!ctxt.IsAIX())
 	s.SetType(sym.SBUILDINFO)
 	s.SetAlign(16)
 	// The \xff is invalid UTF-8, meant to make it less likely
@@ -2186,16 +2203,24 @@ func (ctxt *Link) buildinfo() {
 	if ctxt.Arch.ByteOrder == binary.BigEndian {
 		data[len(prefix)+1] = 1
 	}
+	data[len(prefix)+1] |= 2 // signals new pointer-free format
+	data = appendString(data, strdata["runtime.buildVersion"])
+	data = appendString(data, strdata["runtime.modinfo"])
+	// MacOS linker gets very upset if the size os not a multiple of alignment.
+	for len(data)%16 != 0 {
+		data = append(data, 0)
+	}
 	s.SetData(data)
 	s.SetSize(int64(len(data)))
-	r, _ := s.AddRel(objabi.R_ADDR)
-	r.SetOff(16)
-	r.SetSiz(uint8(ctxt.Arch.PtrSize))
-	r.SetSym(ldr.LookupOrCreateSym("runtime.buildVersion", 0))
-	r, _ = s.AddRel(objabi.R_ADDR)
-	r.SetOff(16 + int32(ctxt.Arch.PtrSize))
-	r.SetSiz(uint8(ctxt.Arch.PtrSize))
-	r.SetSym(ldr.LookupOrCreateSym("runtime.modinfo", 0))
+}
+
+// appendString appends s to data, prefixed by its varint-encoded length.
+func appendString(data []byte, s string) []byte {
+	var v [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(v[:], uint64(len(s)))
+	data = append(data, v[:n]...)
+	data = append(data, s...)
+	return data
 }
 
 // assign addresses to text
@@ -2554,7 +2579,7 @@ func (ctxt *Link) address() []*sym.Segment {
 			bss = s
 		case ".noptrbss":
 			noptrbss = s
-		case "__libfuzzer_extra_counters":
+		case "__sancov_cntrs":
 			fuzzCounters = s
 		}
 	}
@@ -2615,7 +2640,7 @@ func (ctxt *Link) address() []*sym.Segment {
 	}
 
 	if ctxt.BuildMode == BuildModeShared {
-		s := ldr.LookupOrCreateSym("go.link.abihashbytes", 0)
+		s := ldr.LookupOrCreateSym("go:link.abihashbytes", 0)
 		sect := ldr.SymSect(ldr.LookupOrCreateSym(".note.go.abihash", 0))
 		ldr.SetSymSect(s, sect)
 		ldr.SetSymValue(s, int64(sect.Vaddr+16))
@@ -2670,11 +2695,15 @@ func (ctxt *Link) address() []*sym.Segment {
 	ctxt.xdefine("runtime.edata", sym.SDATA, int64(data.Vaddr+data.Length))
 	ctxt.xdefine("runtime.noptrbss", sym.SNOPTRBSS, int64(noptrbss.Vaddr))
 	ctxt.xdefine("runtime.enoptrbss", sym.SNOPTRBSS, int64(noptrbss.Vaddr+noptrbss.Length))
+	ctxt.xdefine("runtime.covctrs", sym.SCOVERAGE_COUNTER, int64(noptrbss.Vaddr+covCounterDataStartOff))
+	ctxt.xdefine("runtime.ecovctrs", sym.SCOVERAGE_COUNTER, int64(noptrbss.Vaddr+covCounterDataStartOff+covCounterDataLen))
 	ctxt.xdefine("runtime.end", sym.SBSS, int64(Segdata.Vaddr+Segdata.Length))
 
 	if fuzzCounters != nil {
-		ctxt.xdefine("internal/fuzz._counters", sym.SLIBFUZZER_EXTRA_COUNTER, int64(fuzzCounters.Vaddr))
-		ctxt.xdefine("internal/fuzz._ecounters", sym.SLIBFUZZER_EXTRA_COUNTER, int64(fuzzCounters.Vaddr+fuzzCounters.Length))
+		ctxt.xdefine("__start___sancov_cntrs", sym.SLIBFUZZER_8BIT_COUNTER, int64(fuzzCounters.Vaddr))
+		ctxt.xdefine("__stop___sancov_cntrs", sym.SLIBFUZZER_8BIT_COUNTER, int64(fuzzCounters.Vaddr+fuzzCounters.Length))
+		ctxt.xdefine("internal/fuzz._counters", sym.SLIBFUZZER_8BIT_COUNTER, int64(fuzzCounters.Vaddr))
+		ctxt.xdefine("internal/fuzz._ecounters", sym.SLIBFUZZER_8BIT_COUNTER, int64(fuzzCounters.Vaddr+fuzzCounters.Length))
 	}
 
 	if ctxt.IsSolaris() {
@@ -2703,7 +2732,7 @@ func (ctxt *Link) address() []*sym.Segment {
 		if gotAddr := ldr.SymValue(ctxt.GOT); gotAddr != 0 {
 			tocAddr = gotAddr + 0x8000
 		}
-		for i, _ := range ctxt.DotTOC {
+		for i := range ctxt.DotTOC {
 			if i >= sym.SymVerABICount && i < sym.SymVerStatic { // these versions are not used currently
 				continue
 			}
@@ -2771,10 +2800,29 @@ func compressSyms(ctxt *Link, syms []loader.Sym) []byte {
 	}
 
 	var buf bytes.Buffer
-	buf.Write([]byte("ZLIB"))
-	var sizeBytes [8]byte
-	binary.BigEndian.PutUint64(sizeBytes[:], uint64(total))
-	buf.Write(sizeBytes[:])
+	if ctxt.IsELF {
+		switch ctxt.Arch.PtrSize {
+		case 8:
+			binary.Write(&buf, ctxt.Arch.ByteOrder, elf.Chdr64{
+				Type:      uint32(elf.COMPRESS_ZLIB),
+				Size:      uint64(total),
+				Addralign: uint64(ctxt.Arch.Alignment),
+			})
+		case 4:
+			binary.Write(&buf, ctxt.Arch.ByteOrder, elf.Chdr32{
+				Type:      uint32(elf.COMPRESS_ZLIB),
+				Size:      uint32(total),
+				Addralign: uint32(ctxt.Arch.Alignment),
+			})
+		default:
+			log.Fatalf("can't compress header size:%d", ctxt.Arch.PtrSize)
+		}
+	} else {
+		buf.Write([]byte("ZLIB"))
+		var sizeBytes [8]byte
+		binary.BigEndian.PutUint64(sizeBytes[:], uint64(total))
+		buf.Write(sizeBytes[:])
+	}
 
 	var relocbuf []byte // temporary buffer for applying relocations
 

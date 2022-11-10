@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Package modcmd implements the ``go mod'' command.
+// Package modcmd implements the “go mod” command.
 package modcmd
 
 import (
@@ -23,10 +23,8 @@ See 'go help modules' for an overview of module functionality.
 	Commands: []*base.Command{
 		cmdDownload,
 		cmdEdit,
-		cmdEditwork,
 		cmdGraph,
 		cmdInit,
-		cmdInitwork,
 		cmdTidy,
 		cmdVendor,
 		cmdVerify,

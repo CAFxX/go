@@ -16,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 var listenersMu sync.Mutex
@@ -55,7 +57,7 @@ type netFD struct {
 
 // socket returns a network file descriptor that is ready for
 // asynchronous I/O using the network poller.
-func socket(ctx context.Context, net string, family, sotype, proto int, ipv6only bool, laddr, raddr sockaddr, ctrlFn func(string, string, syscall.RawConn) error) (*netFD, error) {
+func socket(ctx context.Context, net string, family, sotype, proto int, ipv6only bool, laddr, raddr sockaddr, ctrlCtxFn func(context.Context, string, string, syscall.RawConn) error) (*netFD, error) {
 	fd := &netFD{family: family, sotype: sotype, net: net}
 
 	if laddr != nil && raddr == nil { // listener
@@ -313,4 +315,8 @@ func (fd *netFD) writeMsg(p []byte, oob []byte, sa syscall.Sockaddr) (n int, oob
 
 func (fd *netFD) dup() (f *os.File, err error) {
 	return nil, syscall.ENOSYS
+}
+
+func (r *Resolver) lookup(ctx context.Context, name string, qtype dnsmessage.Type) (dnsmessage.Parser, string, error) {
+	panic("unreachable")
 }

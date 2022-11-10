@@ -5,9 +5,7 @@
 package test
 
 import (
-	"internal/goexperiment"
 	"internal/testenv"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,15 +16,12 @@ import (
 // TestInst tests that only one instantiation of Sort is created, even though generic
 // Sort is used for multiple pointer types across two packages.
 func TestInst(t *testing.T) {
-	if goexperiment.Unified {
-		t.Skip("unified currently does stenciling, not dictionaries")
-	}
 	testenv.MustHaveGoBuild(t)
 	testenv.MustHaveGoRun(t)
 
 	var tmpdir string
 	var err error
-	tmpdir, err = ioutil.TempDir("", "TestDict")
+	tmpdir, err = os.MkdirTemp("", "TestDict")
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
@@ -63,7 +58,7 @@ func TestInst(t *testing.T) {
 	if output, err = cmd.CombinedOutput(); err != nil {
 		t.Fatalf("Failed: %v:\nOut: %s\n", err, output)
 	}
-	out, err := ioutil.ReadFile(filepath.Join("testdata", outname))
+	out, err := os.ReadFile(filepath.Join("testdata", outname))
 	if err != nil {
 		t.Fatalf("Could not find %s\n", outname)
 	}

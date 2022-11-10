@@ -24,6 +24,7 @@ const (
 	ver12
 	ver116
 	ver118
+	ver120
 )
 
 // A LineTable is a data structure mapping program counters to line numbers.
@@ -54,7 +55,7 @@ type LineTable struct {
 	binary      binary.ByteOrder
 	quantum     uint32
 	ptrsize     uint32
-	textStart   uintptr // address of runtime.text symbol (1.18+)
+	textStart   uint64 // address of runtime.text symbol (1.18+)
 	funcnametab []byte
 	cutab       []byte
 	funcdata    []byte
@@ -173,6 +174,7 @@ const (
 	go12magic  = 0xfffffffb
 	go116magic = 0xfffffffa
 	go118magic = 0xfffffff0
+	go120magic = 0xfffffff1
 )
 
 // uintptr returns the pointer-sized value encoded at b.
@@ -229,6 +231,10 @@ func (t *LineTable) parsePclnTab() {
 		t.binary, possibleVersion = binary.LittleEndian, ver118
 	case beMagic == go118magic:
 		t.binary, possibleVersion = binary.BigEndian, ver118
+	case leMagic == go120magic:
+		t.binary, possibleVersion = binary.LittleEndian, ver120
+	case beMagic == go120magic:
+		t.binary, possibleVersion = binary.BigEndian, ver120
 	default:
 		return
 	}
@@ -246,10 +252,10 @@ func (t *LineTable) parsePclnTab() {
 	}
 
 	switch possibleVersion {
-	case ver118:
+	case ver118, ver120:
 		t.nfunctab = uint32(offset(0))
 		t.nfiletab = uint32(offset(1))
-		t.textStart = uintptr(offset(2))
+		t.textStart = t.PC // use the start PC instead of reading from the table, which may be unrelocated
 		t.funcnametab = data(3)
 		t.cutab = data(4)
 		t.filetab = data(5)
@@ -306,11 +312,12 @@ func (t *LineTable) go12Funcs() []Func {
 		f.LineTable = t
 		f.FrameSize = int(info.deferreturn())
 		syms[i] = Sym{
-			Value:  f.Entry,
-			Type:   'T',
-			Name:   t.funcName(info.nameoff()),
-			GoType: 0,
-			Func:   f,
+			Value:     f.Entry,
+			Type:      'T',
+			Name:      t.funcName(info.nameOff()),
+			GoType:    0,
+			Func:      f,
+			goVersion: t.version,
 		}
 		f.Sym = &syms[i]
 	}
@@ -402,7 +409,7 @@ func (f funcTab) Count() int {
 func (f funcTab) pc(i int) uint64 {
 	u := f.uint(f.functab[2*i*f.sz:])
 	if f.version >= ver118 {
-		u += uint64(f.textStart)
+		u += f.textStart
 	}
 	return u
 }
@@ -444,12 +451,12 @@ func (f *funcData) entryPC() uint64 {
 	if f.t.version >= ver118 {
 		// TODO: support multiple text sections.
 		// See runtime/symtab.go:(*moduledata).textAddr.
-		return uint64(f.t.binary.Uint32(f.data)) + uint64(f.t.textStart)
+		return uint64(f.t.binary.Uint32(f.data)) + f.t.textStart
 	}
 	return f.t.uintptr(f.data)
 }
 
-func (f funcData) nameoff() uint32     { return f.field(1) }
+func (f funcData) nameOff() uint32     { return f.field(1) }
 func (f funcData) deferreturn() uint32 { return f.field(3) }
 func (f funcData) pcfile() uint32      { return f.field(5) }
 func (f funcData) pcln() uint32        { return f.field(6) }
@@ -527,7 +534,7 @@ func (t *LineTable) findFileLine(entry uint64, filetab, linetab uint32, filenum,
 	fileStartPC := filePC
 	for t.step(&fp, &filePC, &fileVal, filePC == entry) {
 		fileIndex := fileVal
-		if t.version == ver116 || t.version == ver118 {
+		if t.version == ver116 || t.version == ver118 || t.version == ver120 {
 			fileIndex = int32(t.binary.Uint32(cutab[fileVal*4:]))
 		}
 		if fileIndex == filenum && fileStartPC < filePC {
@@ -626,7 +633,11 @@ func (t *LineTable) go12LineToPC(file string, line int) (pc uint64) {
 		entry := f.entryPC()
 		filetab := f.pcfile()
 		linetab := f.pcln()
-		if t.version == ver116 || t.version == ver118 {
+		if t.version == ver116 || t.version == ver118 || t.version == ver120 {
+			if f.cuOffset() == ^uint32(0) {
+				// skip functions without compilation unit (not real function, or linker generated)
+				continue
+			}
 			cutab = t.cutab[f.cuOffset()*4:]
 		}
 		pc := t.findFileLine(entry, filetab, linetab, int32(filenum), int32(line), cutab)

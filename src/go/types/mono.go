@@ -5,7 +5,9 @@
 package types
 
 import (
+	"go/ast"
 	"go/token"
+	. "internal/types/errors"
 )
 
 // This file implements a check to validate that a Go package doesn't
@@ -137,7 +139,7 @@ func (check *Checker) reportInstanceLoop(v int) {
 	// TODO(mdempsky): Pivot stack so we report the cycle from the top?
 
 	obj0 := check.mono.vertices[v].obj
-	check.errorf(obj0, _InvalidInstanceCycle, "instantiation cycle:")
+	check.error(obj0, InvalidInstanceCycle, "instantiation cycle:")
 
 	qf := RelativeTo(check.pkg)
 	for _, v := range stack {
@@ -148,9 +150,9 @@ func (check *Checker) reportInstanceLoop(v int) {
 		default:
 			panic("unexpected type")
 		case *Named:
-			check.errorf(atPos(edge.pos), _InvalidInstanceCycle, "\t%s implicitly parameterized by %s", obj.Name(), TypeString(edge.typ, qf)) // secondary error, \t indented
+			check.errorf(atPos(edge.pos), InvalidInstanceCycle, "\t%s implicitly parameterized by %s", obj.Name(), TypeString(edge.typ, qf)) // secondary error, \t indented
 		case *TypeParam:
-			check.errorf(atPos(edge.pos), _InvalidInstanceCycle, "\t%s instantiated as %s", obj.Name(), TypeString(edge.typ, qf)) // secondary error, \t indented
+			check.errorf(atPos(edge.pos), InvalidInstanceCycle, "\t%s instantiated as %s", obj.Name(), TypeString(edge.typ, qf)) // secondary error, \t indented
 		}
 	}
 }
@@ -166,11 +168,11 @@ func (w *monoGraph) recordCanon(mpar, tpar *TypeParam) {
 
 // recordInstance records that the given type parameters were
 // instantiated with the corresponding type arguments.
-func (w *monoGraph) recordInstance(pkg *Package, pos token.Pos, tparams []*TypeParam, targs []Type, posList []token.Pos) {
+func (w *monoGraph) recordInstance(pkg *Package, pos token.Pos, tparams []*TypeParam, targs []Type, xlist []ast.Expr) {
 	for i, tpar := range tparams {
 		pos := pos
-		if i < len(posList) {
-			pos = posList[i]
+		if i < len(xlist) {
+			pos = xlist[i].Pos()
 		}
 		w.assign(pkg, pos, tpar, targs[i])
 	}

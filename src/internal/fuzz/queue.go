@@ -9,14 +9,14 @@ package fuzz
 // For now, this is a simple ring buffer
 // (https://en.wikipedia.org/wiki/Circular_buffer).
 //
-// TODO(golang.org/issue/46224): use a priotization algorithm based on input
+// TODO(golang.org/issue/46224): use a prioritization algorithm based on input
 // size, previous duration, coverage, and any other metrics that seem useful.
 type queue struct {
 	// elems holds a ring buffer.
 	// The queue is empty when begin = end.
 	// The queue is full (until grow is called) when end = begin + N - 1 (mod N)
 	// where N = cap(elems).
-	elems     []interface{}
+	elems     []any
 	head, len int
 }
 
@@ -30,7 +30,7 @@ func (q *queue) grow() {
 	if newCap == 0 {
 		newCap = 8
 	}
-	newElems := make([]interface{}, newCap)
+	newElems := make([]any, newCap)
 	oldLen := q.len
 	for i := 0; i < oldLen; i++ {
 		newElems[i] = q.elems[(q.head+i)%oldCap]
@@ -39,7 +39,7 @@ func (q *queue) grow() {
 	q.head = 0
 }
 
-func (q *queue) enqueue(e interface{}) {
+func (q *queue) enqueue(e any) {
 	if q.len+1 > q.cap() {
 		q.grow()
 	}
@@ -48,7 +48,7 @@ func (q *queue) enqueue(e interface{}) {
 	q.len++
 }
 
-func (q *queue) dequeue() (interface{}, bool) {
+func (q *queue) dequeue() (any, bool) {
 	if q.len == 0 {
 		return nil, false
 	}
@@ -59,7 +59,7 @@ func (q *queue) dequeue() (interface{}, bool) {
 	return e, true
 }
 
-func (q *queue) peek() (interface{}, bool) {
+func (q *queue) peek() (any, bool) {
 	if q.len == 0 {
 		return nil, false
 	}
