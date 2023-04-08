@@ -764,30 +764,76 @@ func canonicalMIMEHeaderKey(a []byte) (_ string, ok bool) {
 // headerToString matches the canonical header name in the passed slice
 // and returns the singleton string instance of known, common headers.
 // If the header is not known, the passed slice is returned as a string.
+//
+// A header is eligible for inclusion in headerToString if, either:
+// 1. It is a standard header, e.g. listed in a non-obsolete RFC.
+// 2. It is a header that can be shown to be commonly used in the wild.
 func headerToString(h []byte) (s string) {
-	switch string(h) {
+	switch string(h) { // Compiler does not allocate in this case.
+	case "A-Im":
+		s = "A-Im"
 	case "Accept":
 		s = "Accept"
+	case "Accept-Ch":
+		s = "Accept-Ch"
 	case "Accept-Charset":
 		s = "Accept-Charset"
+	case "Accept-Datetime":
+		s = "Accept-Datetime"
+	case "Access-Control-Allow-Credentials":
+		s = "Access-Control-Allow-Credentials"
+	case "Access-Control-Allow-Headers":
+		s = "Access-Control-Allow-Headers"
+	case "Access-Control-Allow-Methods":
+		s = "Access-Control-Allow-Methods"
+	case "Access-Control-Allow-Origin":
+		s = "Access-Control-Allow-Origin"
+	case "Access-Control-Expose-Headers":
+		s = "Access-Control-Expose-Headers"
+	case "Access-Control-Max-Age":
+		s = "Access-Control-Max-Age"
+	case "Access-Control-Request-Headers":
+		s = "Access-Control-Request-Headers"
+	case "Access-Control-Request-Method":
+		s = "Access-Control-Request-Method"
 	case "Accept-Encoding":
 		s = "Accept-Encoding"
 	case "Accept-Language":
 		s = "Accept-Language"
+	case "Accept-Patch":
+		s = "Accept-Patch"
 	case "Accept-Ranges":
 		s = "Accept-Ranges"
+	case "Age":
+		s = "Age"
+	case "Allow":
+		s = "Allow"
+	case "Alt-Svc":
+		s = "Alt-Svc"
+	case "Authorization":
+		s = "Authorization"
 	case "Cache-Control":
 		s = "Cache-Control"
 	case "Cc":
 		s = "Cc"
 	case "Connection":
 		s = "Connection"
+	case "Content-Disposition":
+		s = "Content-Disposition"
+	case "Content-Encoding":
+		s = "Content-Encoding"
 	case "Content-Id":
 		s = "Content-Id"
 	case "Content-Language":
 		s = "Content-Language"
 	case "Content-Length":
 		s = "Content-Length"
+	case "Content-Location":
+		s = "Content-Location"
+	case "Content-Md5":
+		s = "Content-Md5"
+	case "Content-Range":
+		s = "Content-Range"
 	case "Content-Transfer-Encoding":
 		s = "Content-Transfer-Encoding"
 	case "Content-Type":
@@ -796,56 +842,114 @@ func headerToString(h []byte) (s string) {
 		s = "Cookie"
 	case "Date":
 		s = "Date"
+	case "Delta-Base":
+		s = "Delta-Base"
 	case "Dkim-Signature":
 		s = "Dkim-Signature"
 	case "Etag":
 		s = "Etag"
+	case "Expect":
+		s = "Expect"
 	case "Expires":
 		s = "Expires"
+	case "Forwarded":
+		s = "Forwarded"
 	case "From":
 		s = "From"
 	case "Host":
 		s = "Host"
+	case "Http2-Settings":
+		s = "Http2-Settings"
+	case "If-Match":
+		s = "If-Match"
 	case "If-Modified-Since":
 		s = "If-Modified-Since"
 	case "If-None-Match":
 		s = "If-None-Match"
+	case "If-Range":
+		s = "If-Range"
+	case "If-Unmodified-Since":
+		s = "If-Unmodified-Since"
+	case "Im":
+		s = "Im"
 	case "In-Reply-To":
 		s = "In-Reply-To"
 	case "Last-Modified":
 		s = "Last-Modified"
+	case "Link":
+		s = "Link"
 	case "Location":
 		s = "Location"
+	case "Max-Forwards":
+		s = "Max-Forwards"
 	case "Message-Id":
 		s = "Message-Id"
 	case "Mime-Version":
 		s = "Mime-Version"
+	case "Origin":
+		s = "Origin"
+	case "P3p":
+		s = "P3p"
 	case "Pragma":
 		s = "Pragma"
+	case "Prefer":
+		s = "Prefer"
+	case "Preference-Applied":
+		s = "Preference-Applied"
+	case "Proxy-Authenticate":
+		s = "Proxy-Authenticate"
+	case "Public-Key-Pins":
+		s = "Public-Key-Pins"
+	case "Range":
+		s = "Range"
 	case "Received":
 		s = "Received"
+	case "Referer":
+		s = "Referer"
+	case "Retry-After":
+		s = "Retry-After"
 	case "Return-Path":
 		s = "Return-Path"
 	case "Server":
 		s = "Server"
 	case "Set-Cookie":
 		s = "Set-Cookie"
+	case "Strict-Transport-Security":
+		s = "Strict-Transport-Security"
 	case "Subject":
 		s = "Subject"
+	case "Te":
+		s = "Te"
+	case "Tk":
+		s = "Tk"
 	case "To":
 		s = "To"
+	case "Trailer":
+		s = "Trailer"
+	case "Transfer-Encoding":
+		s = "Transfer-Encoding"
 	case "User-Agent":
 		s = "User-Agent"
+	case "Upgrade":
+		s = "Upgrade"
+	case "Vary":
+		s = "Vary"
 	case "Via":
 		s = "Via"
+	case "Warning":
+		s = "Warning"
+	case "Www-Authenticate":
+		s = "Www-Authenticate"
 	case "X-Forwarded-For":
 		s = "X-Forwarded-For"
+	case "X-Frame-Options":
+		s = "X-Frame-Options"
 	case "X-Imforwards":
 		s = "X-Imforwards"
 	case "X-Powered-By":
 		s = "X-Powered-By"
 	default:
-		s = string(h)
+		s = string(h) // Uncommon header: allocate a new string.
 	}
 	return
 }
