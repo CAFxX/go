@@ -766,8 +766,9 @@ func canonicalMIMEHeaderKey(a []byte) (_ string, ok bool) {
 // If the header is not known, the passed slice is returned as a string.
 //
 // A header is eligible for inclusion in headerToString if, either:
-// 1. It is a standard header, e.g. listed in a non-obsolete RFC.
-// 2. It is a header that can be shown to be commonly used in the wild.
+//  1. It is a standard header, e.g. listed in a non-obsolete RFC or other
+//     standards.
+//  2. It is a header that can be shown to be commonly used in the wild.
 func headerToString(h []byte) (s string) {
 	switch string(h) { // Compiler does not allocate in this case.
 	case "A-Im":
