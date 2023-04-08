@@ -846,10 +846,14 @@ func headerToString(h []byte) (s string) {
 		s = "Delta-Base"
 	case "Dkim-Signature":
 		s = "Dkim-Signature"
+	case "Dnt":
+		s = "Dnt"
 	case "Etag":
 		s = "Etag"
 	case "Expect":
 		s = "Expect"
+	case "Expect-Ct":
+		s = "Expect-Ct"
 	case "Expires":
 		s = "Expires"
 	case "Forwarded":
@@ -874,6 +878,8 @@ func headerToString(h []byte) (s string) {
 		s = "Im"
 	case "In-Reply-To":
 		s = "In-Reply-To"
+	case "Keep-Alive":
+		s = "Keep-Alive"
 	case "Last-Modified":
 		s = "Last-Modified"
 	case "Link":
@@ -906,6 +912,8 @@ func headerToString(h []byte) (s string) {
 		s = "Received"
 	case "Referer":
 		s = "Referer"
+	case "Refresh":
+		s = "Refresh"
 	case "Retry-After":
 		s = "Retry-After"
 	case "Return-Path":
@@ -920,6 +928,8 @@ func headerToString(h []byte) (s string) {
 		s = "Subject"
 	case "Te":
 		s = "Te"
+	case "Timing-Allow-Origin":
+		s = "Timing-Allow-Origin"
 	case "Tk":
 		s = "Tk"
 	case "To":
@@ -932,6 +942,8 @@ func headerToString(h []byte) (s string) {
 		s = "User-Agent"
 	case "Upgrade":
 		s = "Upgrade"
+	case "Upgrade-Insecure-Requests":
+		s = "Upgrade-Insecure-Requests"
 	case "Vary":
 		s = "Vary"
 	case "Via":
@@ -942,12 +954,20 @@ func headerToString(h []byte) (s string) {
 		s = "Www-Authenticate"
 	case "X-Forwarded-For":
 		s = "X-Forwarded-For"
+	case "X-Forwarded-Host":
+		s = "X-Forwarded-Host"
+	case "X-Forwarded-Proto":
+		s = "X-Forwarded-Proto"
 	case "X-Frame-Options":
 		s = "X-Frame-Options"
 	case "X-Imforwards":
 		s = "X-Imforwards"
 	case "X-Powered-By":
 		s = "X-Powered-By"
+	case "X-Request-Id":
+		s = "X-Request-Id"
+	case "X-Requested-With":
+		s = "X-Requested-With"
 	default:
 		s = string(h) // Uncommon header: allocate a new string.
 	}
