@@ -221,6 +221,8 @@ func headerToString(a []byte) (s string) {
 		s = "Cookie"
 	case "Cookie2":
 		s = "Cookie2"
+	case "Correlation-Id":
+		s = "Correlation-Id"
 	case "Critical-Ch":
 		s = "Critical-Ch"
 	case "Cross-Origin-Embedder-Policy":
@@ -353,6 +355,8 @@ func headerToString(a []byte) (s string) {
 		s = "Forwarded"
 	case "From":
 		s = "From"
+	case "Front-End-Https":
+		s = "Front-End-Https"
 	case "Generate-Delivery-Report":
 		s = "Generate-Delivery-Report"
 	case "Getprofile":
@@ -583,6 +587,8 @@ func headerToString(a []byte) (s string) {
 		s = "Proxy-Authentication-Info"
 	case "Proxy-Authorization":
 		s = "Proxy-Authorization"
+	case "Proxy-Connection":
+		s = "Proxy-Connection"
 	case "Proxy-Features":
 		s = "Proxy-Features"
 	case "Proxy-Instruction":
@@ -743,6 +749,8 @@ func headerToString(a []byte) (s string) {
 		s = "Solicitation"
 	case "Sourcemap":
 		s = "Sourcemap"
+	case "Status":
+		s = "Status"
 	case "Status-Uri":
 		s = "Status-Uri"
 	case "Strict-Transport-Security":
@@ -819,14 +827,22 @@ func headerToString(a []byte) (s string) {
 		s = "Width"
 	case "Www-Authenticate":
 		s = "Www-Authenticate"
+	case "X-Att-Deviceid":
+		s = "X-Att-Deviceid"
 	case "X-B3-Spanid":
 		s = "X-B3-Spanid"
 	case "X-B3-Traceid":
 		s = "X-B3-Traceid"
+	case "X-Content-Duration":
+		s = "X-Content-Duration"
+	case "X-Content-Security-Policy":
+		s = "X-Content-Security-Policy"
 	case "X-Content-Type-Options":
 		s = "X-Content-Type-Options"
 	case "X-Correlation-Id":
 		s = "X-Correlation-Id"
+	case "X-Csrf-Token":
+		s = "X-Csrf-Token"
 	case "X-Dns-Prefetch-Control":
 		s = "X-Dns-Prefetch-Control"
 	case "X-Firefox-Spdy":
@@ -839,6 +855,8 @@ func headerToString(a []byte) (s string) {
 		s = "X-Forwarded-Proto"
 	case "X-Frame-Options":
 		s = "X-Frame-Options"
+	case "X-Http-Method-Override":
+		s = "X-Http-Method-Override"
 	case "X-Imforwards":
 		s = "X-Imforwards"
 	case "X-Permitted-Cross-Domain-Policies":
@@ -849,12 +867,22 @@ func headerToString(a []byte) (s string) {
 		s = "X-Powered-By"
 	case "X-Real-Ip":
 		s = "X-Real-Ip"
+	case "X-Redirect-By":
+		s = "X-Redirect-By"
 	case "X-Request-Id":
 		s = "X-Request-Id"
 	case "X-Requested-With":
 		s = "X-Requested-With"
 	case "X-Robots-Tag":
 		s = "X-Robots-Tag"
+	case "X-Ua-Compatible":
+		s = "X-Ua-Compatible"
+	case "X-Uidh":
+		s = "X-Uidh"
+	case "X-Wap-Profile":
+		s = "X-Wap-Profile"
+	case "X-Webkit-Csp":
+		s = "X-Webkit-Csp"
 	case "X-Xss-Protection":
 		s = "X-Xss-Protection"
 	case "X400-Content-Identifier":
