@@ -637,11 +637,11 @@ func CanonicalMIMEHeaderKey(s string) string {
 			return s
 		}
 		if upper && 'a' <= c && c <= 'z' {
-			s, _ = canonicalMIMEHeaderKey([]byte(s))
+			s, _ = canonicalMIMEHeaderKey(s)
 			return s
 		}
 		if !upper && 'A' <= c && c <= 'Z' {
-			s, _ = canonicalMIMEHeaderKey([]byte(s))
+			s, _ = canonicalMIMEHeaderKey(s)
 			return s
 		}
 		upper = c == '-'
@@ -723,7 +723,9 @@ func validHeaderValueByte(c byte) bool {
 // ok is true if the header key contains only valid characters and spaces.
 // ReadMIMEHeader accepts header keys containing spaces, but does not
 // canonicalize them.
-func canonicalMIMEHeaderKey(a []byte) (_ string, ok bool) {
+func canonicalMIMEHeaderKey[T interface{ []byte | string }](k T) (_ string, ok bool) {
+	a := []byte(k)
+
 	// See if a looks like a header key. If not, return it unchanged.
 	noCanon := false
 	for _, c := range a {
@@ -758,7 +760,12 @@ func canonicalMIMEHeaderKey(a []byte) (_ string, ok bool) {
 		a[i] = c
 		upper = c == '-' // for next time
 	}
-	return headerToString(a), true
+
+	s := headerToString(a)
+	if s == "" {
+		s = string(a)
+	}
+	return s, true
 }
 
 // headerToString matches the canonical header name in the passed slice
@@ -905,6 +912,8 @@ func headerToString(h []byte) (s string) {
 		s = "Preference-Applied"
 	case "Proxy-Authenticate":
 		s = "Proxy-Authenticate"
+	case "Proxy-Authorization":
+		s = "Proxy-Authorization"
 	case "Public-Key-Pins":
 		s = "Public-Key-Pins"
 	case "Range":
@@ -969,8 +978,6 @@ func headerToString(h []byte) (s string) {
 		s = "X-Request-Id"
 	case "X-Requested-With":
 		s = "X-Requested-With"
-	default:
-		s = string(h) // Uncommon header: allocate a new string.
 	}
 	return
 }
