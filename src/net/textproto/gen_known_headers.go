@@ -15,7 +15,7 @@ import (
 
 func main() {
 	m := map[string]struct{}{}
-	for _, h := range knownHeaders {
+	for _, h := range knownHeadersRaw {
 		h = textproto.CanonicalMIMEHeaderKey(h)
 		m[h] = struct{}{}
 	}
@@ -58,7 +58,7 @@ func headerToString(a []byte) (s string) {
 	}
 }
 
-var knownHeaders = []string{
+var knownHeadersRaw = []string{
 	// https://www.iana.org/assignments/http-fields/http-fields.xhtml
 	"A-IM",
 	"Accept",
