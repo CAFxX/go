@@ -30,8 +30,8 @@ func main() {
 package textproto
 
 // headerToString matches the canonical header name in the passed slice
-// against a list of %d known/common headers and, in case a match is found,
-// returns the singleton string instance of that header.
+// against a list of %d known/common headers and, in case a match is
+// found, returns the singleton string instance of that header.
 // If the header is not known, the empty string is returned.
 //
 // A header is eligible for inclusion in headerToString if, either:
