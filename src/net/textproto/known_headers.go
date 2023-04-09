@@ -2,12 +2,11 @@
 package textproto
 
 // headerToString matches the canonical header name in the passed slice
-// and returns the singleton string instance of known, common headers.
+// and returns the singleton string instance of 446 known, common headers.
 // If the header is not known, the passed slice is returned as a string.
 //
 // A header is eligible for inclusion in headerToString if, either:
-//  1. It is a standard header, e.g. listed in a non-obsolete RFC or other
-//     standards.
+//  1. It is a standard header, e.g. listed in a RFC or other standards.
 //  2. It is a header that can be shown to be commonly used in the wild.
 func headerToString(a []byte) (s string) {
 	switch string(a) { // Compiler knows how to avoid allocating the string.
