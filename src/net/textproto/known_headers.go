@@ -19,6 +19,8 @@ func headerToString(a []byte) (s string) {
 		s = "Accept-Additions"
 	case "Accept-Ch":
 		s = "Accept-Ch"
+	case "Accept-Ch-Lifetime":
+		s = "Accept-Ch-Lifetime"
 	case "Accept-Charset":
 		s = "Accept-Charset"
 	case "Accept-Datetime":
@@ -33,8 +35,12 @@ func headerToString(a []byte) (s string) {
 		s = "Accept-Patch"
 	case "Accept-Post":
 		s = "Accept-Post"
+	case "Accept-Push-Policy":
+		s = "Accept-Push-Policy"
 	case "Accept-Ranges":
 		s = "Accept-Ranges"
+	case "Accept-Signature":
+		s = "Accept-Signature"
 	case "Access-Control":
 		s = "Access-Control"
 	case "Access-Control-Allow-Credentials":
@@ -165,6 +171,8 @@ func headerToString(a []byte) (s string) {
 		s = "Content-Description"
 	case "Content-Disposition":
 		s = "Content-Disposition"
+	case "Content-Dpr":
+		s = "Content-Dpr"
 	case "Content-Duration":
 		s = "Content-Duration"
 	case "Content-Encoding":
@@ -213,6 +221,8 @@ func headerToString(a []byte) (s string) {
 		s = "Cookie"
 	case "Cookie2":
 		s = "Cookie2"
+	case "Critical-Ch":
+		s = "Critical-Ch"
 	case "Cross-Origin-Embedder-Policy":
 		s = "Cross-Origin-Embedder-Policy"
 	case "Cross-Origin-Embedder-Policy-Report-Only":
@@ -245,6 +255,8 @@ func headerToString(a []byte) (s string) {
 		s = "Derived-From"
 	case "Destination":
 		s = "Destination"
+	case "Device-Memory":
+		s = "Device-Memory"
 	case "Differential-Id":
 		s = "Differential-Id"
 	case "Digest":
@@ -309,8 +321,14 @@ func headerToString(a []byte) (s string) {
 		s = "Downgraded-Sender"
 	case "Downgraded-To":
 		s = "Downgraded-To"
+	case "Downlink":
+		s = "Downlink"
+	case "Dpr":
+		s = "Dpr"
 	case "Early-Data":
 		s = "Early-Data"
+	case "Ect":
+		s = "Ect"
 	case "Ediint-Features":
 		s = "Ediint-Features"
 	case "Encoding":
@@ -383,6 +401,8 @@ func headerToString(a []byte) (s string) {
 		s = "Label"
 	case "Language":
 		s = "Language"
+	case "Large-Allocation":
+		s = "Large-Allocation"
 	case "Last-Event-Id":
 		s = "Last-Event-Id"
 	case "Last-Modified":
@@ -465,6 +485,8 @@ func headerToString(a []byte) (s string) {
 		s = "Mt-Priority"
 	case "Negotiate":
 		s = "Negotiate"
+	case "Nel":
+		s = "Nel"
 	case "Newsgroups":
 		s = "Newsgroups"
 	case "Nntp-Posting-Date":
@@ -493,6 +515,8 @@ func headerToString(a []byte) (s string) {
 		s = "Origin"
 	case "Origin-Agent-Cluster":
 		s = "Origin-Agent-Cluster"
+	case "Origin-Isolation":
+		s = "Origin-Isolation"
 	case "Original-Encoded-Information-Types":
 		s = "Original-Encoded-Information-Types"
 	case "Original-From":
@@ -521,6 +545,8 @@ func headerToString(a []byte) (s string) {
 		s = "Pep"
 	case "Pep-Info":
 		s = "Pep-Info"
+	case "Permissions-Policy":
+		s = "Permissions-Policy"
 	case "Pics-Label":
 		s = "Pics-Label"
 	case "Ping-From":
@@ -569,6 +595,8 @@ func headerToString(a []byte) (s string) {
 		s = "Public-Key-Pins"
 	case "Public-Key-Pins-Report-Only":
 		s = "Public-Key-Pins-Report-Only"
+	case "Push-Policy":
+		s = "Push-Policy"
 	case "Range":
 		s = "Range"
 	case "Received":
@@ -583,6 +611,8 @@ func headerToString(a []byte) (s string) {
 		s = "Referer"
 	case "Referer-Root":
 		s = "Referer-Root"
+	case "Referrer-Policy":
+		s = "Referrer-Policy"
 	case "Refresh":
 		s = "Refresh"
 	case "Relay-Version":
@@ -601,6 +631,8 @@ func headerToString(a []byte) (s string) {
 		s = "Reply-By"
 	case "Reply-To":
 		s = "Reply-To"
+	case "Report-To":
+		s = "Report-To"
 	case "Require-Recipient-Valid-Since":
 		s = "Require-Recipient-Valid-Since"
 	case "Resent-Bcc":
@@ -623,12 +655,44 @@ func headerToString(a []byte) (s string) {
 		s = "Retry-After"
 	case "Return-Path":
 		s = "Return-Path"
+	case "Rtt":
+		s = "Rtt"
 	case "Safe":
 		s = "Safe"
+	case "Save-Data":
+		s = "Save-Data"
 	case "Schedule-Reply":
 		s = "Schedule-Reply"
 	case "Schedule-Tag":
 		s = "Schedule-Tag"
+	case "Sec-Ch-Prefers-Reduced-Motion":
+		s = "Sec-Ch-Prefers-Reduced-Motion"
+	case "Sec-Ch-Ua":
+		s = "Sec-Ch-Ua"
+	case "Sec-Ch-Ua-Arch":
+		s = "Sec-Ch-Ua-Arch"
+	case "Sec-Ch-Ua-Bitness":
+		s = "Sec-Ch-Ua-Bitness"
+	case "Sec-Ch-Ua-Full-Version":
+		s = "Sec-Ch-Ua-Full-Version"
+	case "Sec-Ch-Ua-Full-Version-List":
+		s = "Sec-Ch-Ua-Full-Version-List"
+	case "Sec-Ch-Ua-Mobile":
+		s = "Sec-Ch-Ua-Mobile"
+	case "Sec-Ch-Ua-Model":
+		s = "Sec-Ch-Ua-Model"
+	case "Sec-Ch-Ua-Platform":
+		s = "Sec-Ch-Ua-Platform"
+	case "Sec-Ch-Ua-Platform-Version":
+		s = "Sec-Ch-Ua-Platform-Version"
+	case "Sec-Fetch-Dest":
+		s = "Sec-Fetch-Dest"
+	case "Sec-Fetch-Mode":
+		s = "Sec-Fetch-Mode"
+	case "Sec-Fetch-Site":
+		s = "Sec-Fetch-Site"
+	case "Sec-Fetch-User":
+		s = "Sec-Fetch-User"
 	case "Sec-Gpc":
 		s = "Sec-Gpc"
 	case "Sec-Purpose":
@@ -657,18 +721,28 @@ func headerToString(a []byte) (s string) {
 		s = "Server"
 	case "Server-Timing":
 		s = "Server-Timing"
+	case "Service-Worker-Allowed":
+		s = "Service-Worker-Allowed"
+	case "Service-Worker-Navigation-Preload":
+		s = "Service-Worker-Navigation-Preload"
 	case "Set-Cookie":
 		s = "Set-Cookie"
 	case "Set-Cookie2":
 		s = "Set-Cookie2"
 	case "Setprofile":
 		s = "Setprofile"
+	case "Signature":
+		s = "Signature"
+	case "Signed-Headers":
+		s = "Signed-Headers"
 	case "Slug":
 		s = "Slug"
 	case "Soapaction":
 		s = "Soapaction"
 	case "Solicitation":
 		s = "Solicitation"
+	case "Sourcemap":
+		s = "Sourcemap"
 	case "Status-Uri":
 		s = "Status-Uri"
 	case "Strict-Transport-Security":
@@ -735,10 +809,14 @@ func headerToString(a []byte) (s string) {
 		s = "Vbr-Info"
 	case "Via":
 		s = "Via"
+	case "Viewport-Width":
+		s = "Viewport-Width"
 	case "Want-Digest":
 		s = "Want-Digest"
 	case "Warning":
 		s = "Warning"
+	case "Width":
+		s = "Width"
 	case "Www-Authenticate":
 		s = "Www-Authenticate"
 	case "X-B3-Spanid":
@@ -749,6 +827,10 @@ func headerToString(a []byte) (s string) {
 		s = "X-Content-Type-Options"
 	case "X-Correlation-Id":
 		s = "X-Correlation-Id"
+	case "X-Dns-Prefetch-Control":
+		s = "X-Dns-Prefetch-Control"
+	case "X-Firefox-Spdy":
+		s = "X-Firefox-Spdy"
 	case "X-Forwarded-For":
 		s = "X-Forwarded-For"
 	case "X-Forwarded-Host":
@@ -759,6 +841,10 @@ func headerToString(a []byte) (s string) {
 		s = "X-Frame-Options"
 	case "X-Imforwards":
 		s = "X-Imforwards"
+	case "X-Permitted-Cross-Domain-Policies":
+		s = "X-Permitted-Cross-Domain-Policies"
+	case "X-Pingback":
+		s = "X-Pingback"
 	case "X-Powered-By":
 		s = "X-Powered-By"
 	case "X-Real-Ip":
@@ -767,6 +853,10 @@ func headerToString(a []byte) (s string) {
 		s = "X-Request-Id"
 	case "X-Requested-With":
 		s = "X-Requested-With"
+	case "X-Robots-Tag":
+		s = "X-Robots-Tag"
+	case "X-Xss-Protection":
+		s = "X-Xss-Protection"
 	case "X400-Content-Identifier":
 		s = "X400-Content-Identifier"
 	case "X400-Content-Return":
