@@ -9,11 +9,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"internal/intern"
 	"io"
 	"math"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 // A Reader implements convenience methods for reading requests
@@ -739,10 +739,10 @@ func canonicalMIMEHeaderKey(a []byte) (_ string, ok bool) {
 			noCanon = true
 			continue
 		}
-		return string(a), false
+		return intern.Bytes(a), false
 	}
 	if noCanon {
-		return string(a), true
+		return intern.Bytes(a), true
 	}
 
 	upper := true
@@ -759,64 +759,5 @@ func canonicalMIMEHeaderKey(a []byte) (_ string, ok bool) {
 		a[i] = c
 		upper = c == '-' // for next time
 	}
-	commonHeaderOnce.Do(initCommonHeader)
-	// The compiler recognizes m[string(byteSlice)] as a special
-	// case, so a copy of a's bytes into a new string does not
-	// happen in this map lookup:
-	if v := commonHeader[string(a)]; v != "" {
-		return v, true
-	}
-	return string(a), true
-}
-
-// commonHeader interns common header strings.
-var commonHeader map[string]string
-
-var commonHeaderOnce sync.Once
-
-func initCommonHeader() {
-	commonHeader = make(map[string]string)
-	for _, v := range []string{
-		"Accept",
-		"Accept-Charset",
-		"Accept-Encoding",
-		"Accept-Language",
-		"Accept-Ranges",
-		"Cache-Control",
-		"Cc",
-		"Connection",
-		"Content-Id",
-		"Content-Language",
-		"Content-Length",
-		"Content-Transfer-Encoding",
-		"Content-Type",
-		"Cookie",
-		"Date",
-		"Dkim-Signature",
-		"Etag",
-		"Expires",
-		"From",
-		"Host",
-		"If-Modified-Since",
-		"If-None-Match",
-		"In-Reply-To",
-		"Last-Modified",
-		"Location",
-		"Message-Id",
-		"Mime-Version",
-		"Pragma",
-		"Received",
-		"Return-Path",
-		"Server",
-		"Set-Cookie",
-		"Subject",
-		"To",
-		"User-Agent",
-		"Via",
-		"X-Forwarded-For",
-		"X-Imforwards",
-		"X-Powered-By",
-	} {
-		commonHeader[v] = v
-	}
+	return intern.Bytes(a), true
 }

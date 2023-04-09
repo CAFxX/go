@@ -1643,6 +1643,9 @@ func clearpools() {
 		atomicstorep(p, nil)
 	}
 
+	// clear string interning tables
+	strinterntablecleanup()
+
 	// Clear central sudog cache.
 	// Leave per-P caches alone, they have strictly bounded size.
 	// Disconnect cached list before dropping it on the floor,
