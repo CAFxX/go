@@ -3,42 +3,48 @@ package runtime
 type strinterntable struct {
 	// TODO: use sets instead to avoid storing string headers twice
 	cur map[string]string
-	old map[string]string // read-only, as it is shared across Ps
 }
 
+var old map[string]string // read-only, as it is shared across Ps
+
+const replintvl = 1024
+
+//go:nosplit
 func (s *strinterntable) get(a string) string {
-	if s.cur == nil {
-		s.cur = map[string]string{}
-	}
 	if i, ok := s.cur[a]; ok {
 		return i
 	}
-	if i, ok := s.old[a]; ok {
-		s.cur[i] = i
-		return i
+	if fastrand()%replintvl != 0 {
+		return a
 	}
-	if fastrandn(4) == 0 {
-		s.cur[a] = a
+	i, ok := old[a]
+	if !ok {
+		i = a
 	}
-	return a
-}
-
-func (s *strinterntable) getbytes(a []byte) string {
 	if s.cur == nil {
 		s.cur = map[string]string{}
 	}
+	s.cur[i] = i
+	return i
+}
+
+//go:nosplit
+func (s *strinterntable) getbytes(a []byte) string {
 	if i, ok := s.cur[string(a)]; ok {
 		return i
 	}
-	if i, ok := s.old[string(a)]; ok {
-		s.cur[i] = i
-		return i
+	if fastrand()%replintvl == 0 {
+		return string(a)
 	}
-	b := string(a)
-	if fastrandn(4) == 0 {
-		s.cur[b] = b
+	i, ok := old[string(a)]
+	if !ok {
+		i = string(a)
 	}
-	return b
+	if s.cur == nil {
+		s.cur = map[string]string{}
+	}
+	s.cur[i] = i
+	return i
 }
 
 func internstring(a string) string {
@@ -66,9 +72,16 @@ func strinterntablecleanup() {
 		if l := len(pp.strinterntable.cur); l > maxlen {
 			maxit, maxlen = pp.strinterntable.cur, l
 		}
-	}
-	for _, pp := range allp {
-		pp.strinterntable.old = maxit
 		pp.strinterntable.cur = nil
 	}
+	// Set as the old table the table with the most entries.
+	// This allows, over successive garbage collection cycles, to
+	// share entries across all Ps (as on misses on the new tables
+	// the old table is consulted as a fallback, and hits on the old
+	// table are added to the new tables).
+	// Because the old table will from now and to the next call
+	// to strinterntablecleanup be shared across all Ps, and because
+	// there is no syncrhonization, the old table must always be
+	// accessed exclusively in a read-only fashion.
+	old = maxit
 }
