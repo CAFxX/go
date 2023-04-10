@@ -52,6 +52,8 @@ var strinterntableold map[string]struct{}
 // to the per-P table (on average once every replintvl misses).
 const replintvl = 128
 
+// TODO: inline this
+//
 //go:nosplit
 func (s *strinterntable) get(a string) string {
 	if i := strinterncheck(s.cur, a); i != "" {
@@ -73,6 +75,8 @@ func (s *strinterntable) get(a string) string {
 	return i
 }
 
+// TODO: inline this
+//
 //go:nosplit
 func (s *strinterntable) getbytes(a []byte) string {
 	if i := strinterncheckbytes(s.cur, a); i != "" {
@@ -101,7 +105,10 @@ func internstring(a string) string {
 	}
 	gp := getg()
 	mp := gp.m
-	// G must be pinned while accessing the interning tables
+	// The M must be pinned while accessing the interning tables;
+	// this prevents garbage collection (and, crucially, the
+	// strinterntablecleanup) from running while any P is accessing
+	// the interning tables.
 	mp.locks++
 	s := mp.p.ptr().strinterntable.get(a)
 	mp.locks--
@@ -115,7 +122,10 @@ func internbytes(a []byte) string {
 	}
 	gp := getg()
 	mp := gp.m
-	// G must be pinned while accessing the interning tables
+	// The M must be pinned while accessing the interning tables;
+	// this prevents garbage collection (and, crucially, the
+	// strinterntablecleanup) from running while any P is accessing
+	// the interning tables.
 	mp.locks++
 	s := mp.p.ptr().strinterntable.getbytes(a)
 	mp.locks--
@@ -149,6 +159,8 @@ func strinterntablecleanup() {
 	strinterntableold = maxit
 }
 
+// TODO: inline this
+//
 //go:nosplit
 func strinterncheck(m map[string]struct{}, s string) string {
 	// Check that s is in m, and if so pull the key out of m,
@@ -163,6 +175,8 @@ func strinterncheck(m map[string]struct{}, s string) string {
 	return *(*string)(kp)
 }
 
+// TODO: inline this
+//
 //go:nosplit
 func strinterncheckbytes(m map[string]struct{}, b []byte) string {
 	hdr := (*slice)(unsafe.Pointer(&b))
