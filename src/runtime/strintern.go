@@ -41,7 +41,8 @@ package runtime
 import "unsafe"
 
 type strinterntable struct {
-	cur map[string]struct{} // per-P table: used only by the owning P
+	cur  map[string]struct{} // per-P table: used only by the owning P
+	skip uint32
 }
 
 // global table: read-only, as it is shared across Ps
@@ -56,9 +57,11 @@ func (s *strinterntable) get(a string) string {
 	if i := strinterncheck(s.cur, a); i != "" {
 		return i
 	}
-	if fastrand()%replintvl != 0 {
+	if s.skip > 0 {
+		s.skip--
 		return a
 	}
+	s.skip = fastrand() % (replintvl * 2)
 	i := strinterncheck(strinterntableold, a)
 	if i == "" {
 		i = a
@@ -75,9 +78,11 @@ func (s *strinterntable) getbytes(a []byte) string {
 	if i := strinterncheckbytes(s.cur, a); i != "" {
 		return i
 	}
-	if fastrand()%replintvl == 0 {
+	if s.skip > 0 {
+		s.skip--
 		return string(a)
 	}
+	s.skip = fastrand() % (replintvl * 2)
 	i := strinterncheckbytes(strinterntableold, a)
 	if i == "" {
 		i = string(a)
