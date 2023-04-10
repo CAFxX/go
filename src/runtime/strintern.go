@@ -1,5 +1,35 @@
 package runtime
 
+// This file contains the string interning implementation.
+// String interning is performed in a best-effort manner:
+// the runtime does not guarantee that all strings will be interned.
+//
+// The runtime keeps a per-P table, and a global table.
+//
+// The per-P table is used to hold the strings interned since the last GC.
+// The per-P table can only be used by the P that owns it.
+// During GC, the largest per-P table is promoted to be the global table,
+// while all other per-P tables, and the previous global table, are dropped.
+//
+// The global table is read-only, as it is accessed concurrently by all Ps
+// without synchronization.
+//
+// In case of a miss on the per-P table, the runtime will randomly check
+// if the string is present in the global table. If it is, the string in
+// the global table is added to the per-P table. If it is not, the string
+// is added to the per-P table.
+//
+// How frequently the runtime checks the global table and adds the string
+// to the per-P table is controlled by the replintvl constant. Higher values
+// mean that strings are added to the per-P table less frequently: this
+// is done also to prevent uncommon strings from being added to the
+// tables.
+//
+// If interning is not used for two GC cycles, no memory is used for
+// interning (aside from P+1 pointers for the table roots, where P is the
+// number of Ps). The biggest downside is that a string that is interned
+// can remain alive for one GC cycle more than it would otherwise.
+
 import "unsafe"
 
 type strinterntable struct {
@@ -23,7 +53,7 @@ func (s *strinterntable) get(a string) string {
 		i = a
 	}
 	if s.cur == nil {
-		s.cur = map[string]struct{}{}
+		s.cur = make(map[string]struct{}, len(strinterntableold))
 	}
 	s.cur[i] = struct{}{}
 	return i
@@ -42,7 +72,7 @@ func (s *strinterntable) getbytes(a []byte) string {
 		i = string(a)
 	}
 	if s.cur == nil {
-		s.cur = map[string]struct{}{}
+		s.cur = make(map[string]struct{}, len(strinterntableold))
 	}
 	s.cur[i] = struct{}{}
 	return i
@@ -81,8 +111,8 @@ func strinterntablecleanup() {
 	// worry about concurrent accesses, as Ps are not holding on to any
 	// of the current or old tables (because when they are holding on
 	// to a table the corresponding M's locks must be > 0, in which case
-	// the G running on that M can't be preempted, and until all running
-	// Gs are preempted the world can't be stopped).
+	// the G running on that M can not be preempted, and until all
+	// running Gs are preempted the world can not be stopped).
 	var maxit map[string]struct{}
 	var maxlen int
 	for _, pp := range allp {
