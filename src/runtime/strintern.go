@@ -41,11 +41,14 @@ package runtime
 import "unsafe"
 
 type strinterntable struct {
-	cur map[string]struct{}
+	cur map[string]struct{} // per-P table: used only by the owning P
 }
 
-var strinterntableold map[string]struct{} // read-only, as it is shared across Ps
+// global table: read-only, as it is shared across Ps
+var strinterntableold map[string]struct{}
 
+// replintvl controls how often misses lead to adding a string
+// to the per-P table (on average once every replintvl misses).
 const replintvl = 128
 
 //go:nosplit
@@ -157,8 +160,7 @@ func strinterncheck(m map[string]struct{}, s string) string {
 
 //go:nosplit
 func strinterncheckbytes(m map[string]struct{}, b []byte) string {
-	ptr := unsafe.Pointer(&b[0])
-	len := len(b)
-	s := *(*string)(unsafe.Pointer(&stringStruct{ptr, len}))
+	hdr := (*slice)(unsafe.Pointer(&b))
+	s := *(*string)(unsafe.Pointer(&stringStruct{hdr.array, hdr.len}))
 	return strinterncheck(m, s)
 }
