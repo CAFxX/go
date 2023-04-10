@@ -30,6 +30,14 @@ package runtime
 // number of Ps). The biggest downside is that a string that is interned
 // can remain alive for one GC cycle more than it would otherwise.
 
+// TODO:
+// - add a way to disable interning
+// - better protection against pathological uses (e.g. as the miss ratio
+//   increases, the runtime should skip interning more often)
+// - use a dedicated set implementation that allows to precompute the hash
+//   of the string and use it in both the per-P and global tables (to avoid
+//   hashing the string more than once)
+
 import "unsafe"
 
 type strinterntable struct {
