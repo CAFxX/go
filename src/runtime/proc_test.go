@@ -1158,3 +1158,22 @@ func TestBigGOMAXPROCS(t *testing.T) {
 		t.Errorf("output:\n%s\nwanted:\nunknown function: NonexistentTest", output)
 	}
 }
+
+func BenchmarkGosched(b *testing.B) {
+	for N, P := 1, runtime.GOMAXPROCS(0); N <= P; N++ {
+		if testing.Short() && (N != 1 && N != P-1 && N != P) {
+			continue
+		}
+		b.Run(fmt.Sprint(N), func(b *testing.B) {
+			var count atomic.Int64
+			b.RunParallel(func(pb *testing.PB) {
+				if int(count.Add(1)) > N {
+					return
+				}
+				for pb.Next() {
+					runtime.Gosched()
+				}
+			})
+		})
+	}
+}

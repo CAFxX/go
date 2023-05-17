@@ -324,7 +324,9 @@ func forcegchelper() {
 //go:nosplit
 func Gosched() {
 	checkTimeouts()
-	mcall(gosched_m)
+	// Use goschedIfBusy so that we immediately return if there is nothing
+	// else to do.
+	goschedIfBusy()
 }
 
 // goschedguarded yields the processor like gosched, but also checks
@@ -335,9 +337,9 @@ func goschedguarded() {
 	mcall(goschedguarded_m)
 }
 
-// goschedIfBusy yields the processor like gosched, but only does so if
-// there are no idle Ps or if we're on the only P and there's nothing in
-// the run queue. In both cases, there is freely available idle time.
+// goschedIfBusy yields the processor if there are no idle Ps or if we're on
+// the only P and there's nothing in the run queue. In both cases, there is
+// freely available idle time.
 //
 //go:nosplit
 func goschedIfBusy() {
