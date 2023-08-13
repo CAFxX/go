@@ -481,19 +481,19 @@ func (l *LimitedReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-// NewSectionReader returns a SectionReader that reads from r
-// starting at offset off and stops with EOF after n bytes.
-func NewSectionReader(r ReaderAt, off int64, n int64) *SectionReader {
+// NewSectionReader returns a SectionReader that reads from parent
+// starting at offset base and stops with EOF after size bytes.
+func NewSectionReader(parent ReaderAt, base, size int64) *SectionReader {
 	var remaining int64
 	const maxint64 = 1<<63 - 1
-	if off <= maxint64-n {
-		remaining = n + off
+	if base <= maxint64-size {
+		remaining = size + base
 	} else {
 		// Overflow, with no way to return error.
 		// Assume we can read up to an offset of 1<<63 - 1.
 		remaining = maxint64
 	}
-	return &SectionReader{r, off, off, remaining}
+	return &SectionReader{parent, base, base, remaining}
 }
 
 // SectionReader implements Read, Seek, and ReadAt on a section
@@ -553,6 +553,13 @@ func (s *SectionReader) ReadAt(p []byte, off int64) (n int, err error) {
 	}
 	return s.r.ReadAt(p, off)
 }
+
+// Parent returns the parent ReaderAt.
+func (s *SectionReader) Parent() ReaderAt { return s.r }
+
+// Base returns the base offset (relative to the parent ReaderAt) at which
+// the section starts.
+func (s *SectionReader) Base() int64 { return s.base }
 
 // Size returns the size of the section in bytes.
 func (s *SectionReader) Size() int64 { return s.limit - s.base }
