@@ -8,11 +8,9 @@ import (
 	"bufio"
 	"bytes"
 	"io"
-	"net"
 	"reflect"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -412,52 +410,6 @@ func TestReadMultiLineError(t *testing.T) {
 	}
 }
 
-func TestCommonHeaders(t *testing.T) {
-	commonHeaderOnce.Do(initCommonHeader)
-	for h := range commonHeader {
-		if h != CanonicalMIMEHeaderKey(h) {
-			t.Errorf("Non-canonical header %q in commonHeader", h)
-		}
-	}
-	b := []byte("content-Length")
-	want := "Content-Length"
-	n := testing.AllocsPerRun(200, func() {
-		if x, _ := canonicalMIMEHeaderKey(b); x != want {
-			t.Fatalf("canonicalMIMEHeaderKey(%q) = %q; want %q", b, x, want)
-		}
-	})
-	if n > 0 {
-		t.Errorf("canonicalMIMEHeaderKey allocs = %v; want 0", n)
-	}
-}
-
-func TestIssue46363(t *testing.T) {
-	// Regression test for data race reported in issue 46363:
-	// ReadMIMEHeader reads commonHeader before commonHeader has been initialized.
-	// Run this test with the race detector enabled to catch the reported data race.
-
-	// Reset commonHeaderOnce, so that commonHeader will have to be initialized
-	commonHeaderOnce = sync.Once{}
-	commonHeader = nil
-
-	// Test for data race by calling ReadMIMEHeader and CanonicalMIMEHeaderKey concurrently
-
-	// Send MIME header over net.Conn
-	r, w := net.Pipe()
-	go func() {
-		// ReadMIMEHeader calls canonicalMIMEHeaderKey, which reads from commonHeader
-		NewConn(r).ReadMIMEHeader()
-	}()
-	w.Write([]byte("A: 1\r\nB: 2\r\nC: 3\r\n\r\n"))
-
-	// CanonicalMIMEHeaderKey calls commonHeaderOnce.Do(initCommonHeader) which initializes commonHeader
-	CanonicalMIMEHeaderKey("a")
-
-	if commonHeader == nil {
-		t.Fatal("CanonicalMIMEHeaderKey should initialize commonHeader")
-	}
-}
-
 var clientHeaders = strings.Replace(`Host: golang.org
 Connection: keep-alive
 Cache-Control: max-age=0
@@ -491,6 +443,8 @@ func BenchmarkReadMIMEHeader(b *testing.B) {
 	}{
 		{"client_headers", clientHeaders},
 		{"server_headers", serverHeaders},
+		{"client_headers_lowercase", strings.ToLower(clientHeaders)},
+		{"server_headers_lowercase", strings.ToLower(serverHeaders)},
 	} {
 		b.Run(set.name, func(b *testing.B) {
 			var buf bytes.Buffer
@@ -521,5 +475,16 @@ func BenchmarkUncommon(b *testing.B) {
 		if _, ok := h["Uncommon-Header-For-Benchmark"]; !ok {
 			b.Fatal("Missing result header.")
 		}
+	}
+}
+
+func BenchmarkCanonicalMIMEHeaderKey(b *testing.B) {
+	cases := []string{"Accept-Encoding", "accept-encoding", "Foo-Bar-Baz", "foo-bar-baz", "not=a=header"}
+	for _, c := range cases {
+		b.Run(c, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = CanonicalMIMEHeaderKey(c)
+			}
+		})
 	}
 }

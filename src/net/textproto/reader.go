@@ -630,24 +630,58 @@ func (r *Reader) upcomingHeaderKeys() (n int) {
 // If s contains a space or invalid header field bytes, it is
 // returned without modifications.
 func CanonicalMIMEHeaderKey(s string) string {
+	// Fast path: check the interning table.
+	m := internPoolCanonicalMIMEHeaderKey.Get().(map[string]string)
+	defer internPoolCanonicalMIMEHeaderKey.Put(m)
+	if v, ok := m[s]; ok {
+		return v
+	}
+
 	// Quick check for canonical encoding.
-	upper := true
+	cs, upper := s, true
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if !validHeaderFieldByte(c) {
-			return s
+			break
 		}
-		if upper && 'a' <= c && c <= 'z' {
-			s, _ = canonicalMIMEHeaderKey([]byte(s))
-			return s
-		}
-		if !upper && 'A' <= c && c <= 'Z' {
-			s, _ = canonicalMIMEHeaderKey([]byte(s))
-			return s
+		if (upper && 'a' <= c && c <= 'z') || (!upper && 'A' <= c && c <= 'Z') {
+			// Header is not in the canonical encoding, canonicalize it.
+			cs, _ = _canonicalMIMEHeaderKey([]byte(s))
+			break
 		}
 		upper = c == '-'
 	}
-	return s
+
+	updateInterningTable(m, s, cs)
+
+	return cs
+}
+
+func updateInterningTable(m map[string]string, s, cs string) {
+	if s != cs {
+		m[s] = cs
+	}
+	m[cs] = cs
+
+	const maxInternPoolEntries = 1000
+	if len(m) <= maxInternPoolEntries {
+		return
+	}
+	for k := range m {
+		if k == s || k == cs {
+			continue
+		}
+		delete(m, k)
+		if len(m) <= maxInternPoolEntries {
+			return
+		}
+	}
+}
+
+var internPoolCanonicalMIMEHeaderKey = sync.Pool{
+	New: func() any {
+		return make(map[string]string)
+	},
 }
 
 const toLower = 'a' - 'A'
@@ -725,6 +759,22 @@ func validHeaderValueByte(c byte) bool {
 // ReadMIMEHeader accepts header keys containing spaces, but does not
 // canonicalize them.
 func canonicalMIMEHeaderKey(a []byte) (_ string, ok bool) {
+	// Fast path: check the interning table.
+	m := internPoolCanonicalMIMEHeaderKey.Get().(map[string]string)
+	defer internPoolCanonicalMIMEHeaderKey.Put(m)
+	if v, ok := m[string(a)]; ok {
+		return v, true
+	}
+
+	s := string(a)
+	cs, ok := _canonicalMIMEHeaderKey(a)
+	if ok {
+		updateInterningTable(m, s, cs)
+	}
+	return cs, ok
+}
+
+func _canonicalMIMEHeaderKey(a []byte) (_ string, ok bool) {
 	// See if a looks like a header key. If not, return it unchanged.
 	noCanon := false
 	for _, c := range a {
@@ -759,64 +809,5 @@ func canonicalMIMEHeaderKey(a []byte) (_ string, ok bool) {
 		a[i] = c
 		upper = c == '-' // for next time
 	}
-	commonHeaderOnce.Do(initCommonHeader)
-	// The compiler recognizes m[string(byteSlice)] as a special
-	// case, so a copy of a's bytes into a new string does not
-	// happen in this map lookup:
-	if v := commonHeader[string(a)]; v != "" {
-		return v, true
-	}
 	return string(a), true
-}
-
-// commonHeader interns common header strings.
-var commonHeader map[string]string
-
-var commonHeaderOnce sync.Once
-
-func initCommonHeader() {
-	commonHeader = make(map[string]string)
-	for _, v := range []string{
-		"Accept",
-		"Accept-Charset",
-		"Accept-Encoding",
-		"Accept-Language",
-		"Accept-Ranges",
-		"Cache-Control",
-		"Cc",
-		"Connection",
-		"Content-Id",
-		"Content-Language",
-		"Content-Length",
-		"Content-Transfer-Encoding",
-		"Content-Type",
-		"Cookie",
-		"Date",
-		"Dkim-Signature",
-		"Etag",
-		"Expires",
-		"From",
-		"Host",
-		"If-Modified-Since",
-		"If-None-Match",
-		"In-Reply-To",
-		"Last-Modified",
-		"Location",
-		"Message-Id",
-		"Mime-Version",
-		"Pragma",
-		"Received",
-		"Return-Path",
-		"Server",
-		"Set-Cookie",
-		"Subject",
-		"To",
-		"User-Agent",
-		"Via",
-		"X-Forwarded-For",
-		"X-Imforwards",
-		"X-Powered-By",
-	} {
-		commonHeader[v] = v
-	}
 }
