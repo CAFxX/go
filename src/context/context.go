@@ -758,6 +758,31 @@ func (c *valueCtx) Value(key any) any {
 	return value(c.Context, key)
 }
 
+func WithValueFunc(ctx context.Context, key any, valFn func() any) context.Context {
+	return &valueFuncCtx{Context: ctx, key: key, valFn: valFn}
+}
+
+type valueFuncCtx struct {
+	Context
+	key   any
+	once  sync.Once
+	valFn func() any
+	val   any
+}
+
+var _ Context = &valueFuncCtx{}
+
+func (c *valueFuncCtx) Value(key any) any {
+	if key == c.key {
+		c.once.Do(func() {
+			c.val = c.valFn()
+			c.valFn = nil
+		})
+		return c.val
+	}
+	return value(c.Context, key)
+}
+
 func value(c Context, key any) any {
 	for {
 		switch ctx := c.(type) {
@@ -766,6 +791,15 @@ func value(c Context, key any) any {
 				return ctx.val
 			}
 			c = ctx.Context
+		case *valueFuncCtx:
+			if key == ctx.key {
+				ctx.once.Do(func() {
+					ctx.val = ctx.valFn()
+					ctx.valFn = nil
+				})				
+				return ctx.val
+			}
+			c = ctx.Context			
 		case *cancelCtx:
 			if key == &cancelCtxKey {
 				return c
