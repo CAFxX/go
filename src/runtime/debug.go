@@ -18,10 +18,15 @@ func GOMAXPROCS(n int) int {
 		n = 1 // WebAssembly has no threads yet, so only one CPU is possible.
 	}
 
+	if n <= 0 {
+		// Fast path for the case in which we only want to get the current GOMAXPROCS.
+		return int(atomic.Loadint32(&gomaxprocs))
+	}
+
 	lock(&sched.lock)
 	ret := int(gomaxprocs)
 	unlock(&sched.lock)
-	if n <= 0 || n == ret {
+	if n == ret {
 		return ret
 	}
 
