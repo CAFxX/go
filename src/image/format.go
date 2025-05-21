@@ -51,8 +51,36 @@ type reader interface {
 func asReader(r io.Reader) reader {
 	if rr, ok := r.(reader); ok {
 		return rr
+	} else if bb, ok := r.(*bytes.Buffer); ok {
+		return bytesBufferPeeker{bb}
+	} else if br, ok := r.(*bytes.Reader); ok {
+		return bytesReaderPeeker{br}
 	}
 	return bufio.NewReader(r)
+}
+
+type bytesBufferPeeker struct { *bytes.Buffer }
+
+func (p bytesBufferPeeker) Peek(n int) ([]byte, error) {
+	if p.Len() < n {
+		return nil, io.EOF
+	}
+	return p.Bytes()[:n], nil
+}
+
+type bytesReaderPeeker struct { *bytes.Reader }
+
+func (p bytesReaderPeeker) Peek(n int) ([]byte, error) {
+	l := p.Len()
+	if l < n {
+		return nil, io.EOF
+	}
+	buf := make([]byte, n)
+	_, err := p.ReadAt(buf, p.Size() - l)
+	if err != nil {
+		return nil, err
+	}
+	return buf, nil
 }
 
 // match reports whether magic matches b. Magic may contain "?" wildcards.
