@@ -51,12 +51,21 @@ type mcache struct {
 	// a single malloc call can often access both in the same cache line for a given spanClass.
 	// It's not interleaved right now in part to have slightly smaller diff, and might be
 	// negligible effect on current microbenchmarks.
+	// TODO(thepudds): currently very wasteful to have numSpanClasses of reusableScan and
+	// reusableNoscan. Could just cast as needed instead of having two arrays, or could use
+	// two arrays of size _NumSizeClasses, or ___.
 
 	// reusableNoscan contains linked lists of reusable noscan heap objects, indexed by spanClass.
 	// The next pointers are stored in the first word of the heap objects.
 	reusableNoscan [numSpanClasses]gclinkptr
 
+	// reusableScan contains reusableLinks forming chunked linked lists of reusable scan objects,
+	// indexed by spanClass.
+	reusableScan [numSpanClasses]uintptr
+
 	stackcache [_NumStackOrders]stackfreelist
+
+	reusableLinkCache uintptr // free list of *reusableLink. (We don't use fixalloc.free).
 
 	// flushGen indicates the sweepgen during which this mcache
 	// was last flushed. If flushGen != mheap_.sweepgen, the spans
@@ -125,7 +134,6 @@ func freemcache(c *mcache) {
 		// with the stealing of gcworkbufs during garbage collection to avoid
 		// a race where the workbuf is double-freed.
 		// gcworkbuffree(c.gcworkbuf)
-
 		lock(&mheap_.lock)
 		mheap_.cachealloc.free(unsafe.Pointer(c))
 		unlock(&mheap_.lock)
@@ -158,6 +166,8 @@ func getMCache(mp *m) *mcache {
 // Must run in a non-preemptible context since otherwise the owner of
 // c could change.
 func (c *mcache) refill(spc spanClass) {
+	// println("refill", spc, "c", c, "mheap_.sweepgen", mheap_.sweepgen)
+
 	// Return the current cached span to the central lists.
 	s := c.alloc[spc]
 
@@ -166,9 +176,25 @@ func (c *mcache) refill(spc spanClass) {
 	}
 
 	// TODO(thepudds): we might be able to allow mallocgcTiny to reuse 16 byte objects from spc==5,
-	// but for now, just clear our reusable objects for tinySpanClass.
-	if spc == tinySpanClass {
+	// but for now, just clear our reusable objects for tinySpanClass. Similarly, we might have
+	// reusable pointers on a noheader scan span if we left reusable objects that did not have
+	// matching heap bits and then needed to refill on the normal allocation path.
+	// TODO(thepudds): this passes tests, but might be better to just allow the refill to happen
+	// without complaining, rather than clearing. Also, we currently only partially clear (not clearing next),
+	// and only partially check whether to complain (not checking next), which means we are effectively
+	// already allowing refills to proceed with non-empty reusable links.
+	if spc == tinySpanClass || (!spc.noscan() && heapBitsInSpan(s.elemsize)) {
+		if c.reusableScan[spc] != 0 {
+			rl := (*reusableLink)(unsafe.Pointer(c.reusableScan[spc]))
+			rl.len = 0
+		}
 		c.reusableNoscan[spc] = 0
+	}
+	if c.reusableScan[spc] != 0 {
+		rl := (*reusableLink)(unsafe.Pointer(c.reusableScan[spc]))
+		if rl.len > 0 {
+			throw("refill of span with reusable pointers remaining on pointer slice")
+		}
 	}
 	if c.reusableNoscan[spc] != 0 {
 		throw("refill of span with reusable pointers remaining on pointer free list")
@@ -340,6 +366,26 @@ func (c *mcache) releaseAll() {
 	// maybe based on the existing debugReusableLog.
 	clear(c.reusableNoscan[:])
 
+	// For scan objects, we have chunked linked lists. We save the list nodes in c.reusableLinkCache.
+	// TODO(thepudds): we currently do not enforce a max count, which simplifies current perf testing, but we need
+	// a limit or a different mechanism. This will be tackled in a later CL.
+	// TODO(thepudds): could consider tracking tail pointers if we end up with longer list lengths,
+	// or maybe we end up with a completely different storage scheme.
+	for i := range c.reusableScan {
+		if c.reusableScan[i] != 0 {
+			// Prepend the list in c.reusableScan[i] to c.reusableLinkCache.
+			// First, find the tail. Note we don't clear or reset each link,
+			// and instead do that when pulling from the cache.
+			rl := (*reusableLink)(unsafe.Pointer(c.reusableScan[i]))
+			for rl.next != 0 {
+				rl = (*reusableLink)(unsafe.Pointer(rl.next))
+			}
+			rl.next = c.reusableLinkCache
+			c.reusableLinkCache = c.reusableScan[i]
+			c.reusableScan[i] = 0
+		}
+	}
+
 	// Update heapLive and heapScan.
 	gcController.update(dHeapLive, scanAlloc)
 }
@@ -368,6 +414,112 @@ func (c *mcache) prepareForSweep() {
 	c.flushGen.Store(mheap_.sweepgen) // Synchronizes with gcStart
 }
 
+// TODO(thepudds): for tracking the set of reusable objects, we currently have two parallel approaches:
+//
+// 1. For noscan objects: a linked list of heap object, with the next pointers stored
+//    in the first word of the formerly live heap objects.
+//
+// 2. For scan objects: a chunked linked list, with N pointers to heap objects per chunk
+//    and the chunks linked together.
+//
+// The first approach is simpler and likely better performance. Importantly, it also uses
+// zero extra memory, and we do not need any cap on how many noscan objects we track.
+//
+// However, we don't use the first approach for scan objects because a linked list for
+// an mspan with types that mostly have user pointers in the first slot
+// might have a performance hiccup where the GC could examine one of the objects
+// in the free list (for example via a queued pointer during mark, or maybe an unlucky conservative scan),
+// and then the GC might then walk and mark the ~complete list of objects
+// in the free list by following the next pointers from that (otherwise dead) object,
+// while thinking the next pointers are valid user pointers.
+//
+// One alternative I might try for scan objects is storing the next pointer at the end of the allocation slot
+// when there is room, which is likely often the case, especially once you get past the smallest size classes.
+// For example, if the user allocates a 1024-byte user object, that ends up in the 1152-byte size class
+// (due to the existing type header) with ~120 bytes otherwise unused at the end of the allocation slot.
+// A drawback of this is it is not a complete solution because some heap objects do not have spare space,
+// so we might still need a chunked list or similar. (We could bump up a size class when needed,
+// but that is probably too wasteful. Separately, instead of a footer, when there is naturally
+// enough spare space, we could consider sliding the start of the user object an extra 8 bytes
+// so that the runtime can then use the second word of the allocation slot for the next pointer,
+// which might have better performance than a footer, but might be more complex).
+//
+// One idea from Michael K. is possibly setting the type header to nil for scan objects > 512 bytes,
+// and then use the second word of the heap object for the next pointer. If done properly, the nil
+// type header could mean the GC does not interpret the next pointer value as a user pointer.
+// The GC will currently throw if it finds an object with a nil type header, though
+// we likely could make not complain about that. If we did this approach, we would still need
+// a separate solution for <= 512 byte scan objects.
+
+// reusableLink is a node in an chunked linked list of reusable objects,
+// used for scan objects.
+type reusableLink struct {
+	// TODO(thepudds): should this include sys.NotInHeap?
+
+	// next points to the next reusableLink in the list.
+	next uintptr
+	// len is the number of reusable objects in this link.
+	len int32
+	// rest is the number of links in the list following this one,
+	// used to track max number of links.
+	rest int32
+	// ptrs contains pointers to reusable objects.
+	// The pointer is to the base of the heap object.
+	// TODO(thepudds): maybe aim for 64 bytes or 128 bytes (2 cache lines if aligned).
+	ptrs [6]uintptr
+}
+
+func (c *mcache) allocReusableLink() uintptr {
+	var rl *reusableLink
+	if c.reusableLinkCache != 0 {
+		// Pop from the free list of reusableLinks.
+		rl = (*reusableLink)(unsafe.Pointer(c.reusableLinkCache))
+		c.reusableLinkCache = rl.next
+	} else {
+		systemstack(func() {
+			lock(&mheap_.reusableLinkLock)
+			rl = (*reusableLink)(mheap_.reusableLinkAlloc.alloc())
+			unlock(&mheap_.reusableLinkLock)
+		})
+	}
+	// TODO(thepudds): do a general review -- double-check we conservatively clearing next pointers (e.g., after popping).
+	rl.next = 0
+	rl.len = 0
+	rl.rest = 0
+	return uintptr(unsafe.Pointer(rl))
+}
+
+// addReusableScan adds an object pointer to a chunked linked list of reusable pointers
+// for a span class.
+func (c *mcache) addReusableScan(spc spanClass, ptr uintptr) {
+	if !runtimeFreegcEnabled {
+		return
+	}
+
+	rl := (*reusableLink)(unsafe.Pointer(c.reusableScan[spc]))
+	if rl == nil || rl.len == int32(len(rl.ptrs)) {
+		var linkCount int32
+		if rl != nil {
+			linkCount = rl.rest + 1
+			if linkCount == 4 {
+				// Currently allow at most 4 links per span class.
+				// We are full, so drop this reusable ptr.
+				// TODO(thepudds): pick a max. Maybe a max per mcache instead or in addition to a max per span class?
+				return
+			}
+		}
+		// Prepend a new link.
+		new := (*reusableLink)(unsafe.Pointer(c.allocReusableLink()))
+		new.next = uintptr(unsafe.Pointer(rl))
+		c.reusableScan[spc] = uintptr(unsafe.Pointer(new))
+
+		new.rest = linkCount
+		rl = new
+	}
+	rl.ptrs[rl.len] = ptr
+	rl.len++
+}
+
 // addReusableNoscan adds a noscan object pointer to the reusable pointer free list
 // for a span class.
 func (c *mcache) addReusableNoscan(spc spanClass, ptr uintptr) {
@@ -381,6 +533,16 @@ func (c *mcache) addReusableNoscan(spc spanClass, ptr uintptr) {
 	c.reusableNoscan[spc] = v
 }
 
+// hasReusableScan reports whether there is a reusable object available for
+// a scan spc.
+func (c *mcache) hasReusableScan(spc spanClass) bool {
+	if !runtimeFreegcEnabled || c.reusableScan[spc] == 0 {
+		return false
+	}
+	rl := (*reusableLink)(unsafe.Pointer(c.reusableScan[spc]))
+	return rl.len > 0 || rl.next != 0
+}
+
 // hasReusableNoscan reports whether there is a reusable object available for
 // a noscan spc.
 func (c *mcache) hasReusableNoscan(spc spanClass) bool {
@@ -388,4 +550,29 @@ func (c *mcache) hasReusableNoscan(spc spanClass) bool {
 		return false
 	}
 	return c.reusableNoscan[spc] != 0
+}
+
+// reusableLink returns a reusableLink containing reusable pointers for the span class.
+// It must only be called after hasReusableScan has returned true.
+func (c *mcache) reusableLink(spc spanClass) *reusableLink {
+	rl := (*reusableLink)(unsafe.Pointer(c.reusableScan[spc]))
+	if rl.len == 0 {
+		if rl.next == 0 {
+			throw("nonEmptyReusableLink: no reusableLink with reusable objects")
+		}
+
+		// Make the next link head of the list.
+		next := (*reusableLink)(unsafe.Pointer(rl.next))
+		c.reusableScan[spc] = uintptr(unsafe.Pointer(next))
+		if next.len != int32(len(next.ptrs)) {
+			throw("nextReusableScan: next reusable link is not full")
+		}
+
+		// Prepend the empty link to reusableLinkCache.
+		rl.next = c.reusableLinkCache
+		c.reusableLinkCache = uintptr(unsafe.Pointer(rl))
+
+		rl = next
+	}
+	return rl
 }

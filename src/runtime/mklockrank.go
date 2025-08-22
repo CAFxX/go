@@ -146,6 +146,7 @@ allg,
 < fin,
   spanSetSpine,
   mspanSpecial,
+  reusableLink,
   traceTypeTab,
   MPROF;
 
@@ -185,6 +186,7 @@ defer,
   gscan,
   mspanSpecial,
   pollCache,
+  reusableLink,
   sudog,
   timer
 # Anything that can have write barriers can acquire WB.
@@ -209,7 +211,7 @@ stackLarge,
 # Pinner bits might be freed by the span allocator.
 mheap, mspanSpecial < mheapSpecial;
 # Fixallocs
-mheap, mheapSpecial, xRegAlloc < globalAlloc;
+mheap, mheapSpecial, reusableLink, xRegAlloc < globalAlloc;
 
 # Execution tracer events (with a P)
 hchan,

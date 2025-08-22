@@ -251,6 +251,22 @@ func TestFreegc(t *testing.T) {
 		{"size=4096", testFreegc[[4096]byte], true},
 		{"size=20000", testFreegc[[20000]byte], true},       // not power of 2 or spc boundary
 		{"size=32KiB-8", testFreegc[[1<<15 - 8]byte], true}, // max noscan small object for 64-bit
+
+		// Types with pointers, plus some additional size variation.
+		{"size=16", testFreegc[[16 / PtrSize]*int], false},
+		{"size=24", testFreegc[[24 / PtrSize]*int], false},
+		{"size=32", testFreegc[[32 / PtrSize]*int], false},
+		{"size=64", testFreegc[[64 / PtrSize]*int], false},
+		{"size=72", testFreegc[[72 / PtrSize]*int], false},
+		{"size=200", testFreegc[[200 / PtrSize]*int], false},
+		{"size=504", testFreegc[[504 / PtrSize]*int], false},
+		{"size=512", testFreegc[[512 / PtrSize]*int], false},
+		{"size=520", testFreegc[[520 / PtrSize]*int], false},
+		{"size=4088", testFreegc[[4088 / PtrSize]*int], false},
+		{"size=4096", testFreegc[[4096 / PtrSize]*int], false},
+		{"size=4104", testFreegc[[4104 / PtrSize]*int], false},
+		{"size=14336", testFreegc[[14336 / PtrSize]*int], false},         // size class just below 16 KiB (ignoring header)
+		{"size=32KiB-8", testFreegc[[(1<<15 - 8) / PtrSize]*int], false}, // max scan small object for 64-bit
 	}
 
 	// Run the tests twice if not in -short mode or not otherwise saving test time.
@@ -420,6 +436,113 @@ func testFreegc[T comparable](noscan bool) func(*testing.T) {
 				for _, p := range s {
 					free(p)
 				}
+			}
+		})
+
+		t.Run("free-alternating-types", func(t *testing.T) {
+			// Confirm we can allocate and free elements in the same size class
+			// but with pointers in different locations while getting the
+			// expected allocation counts.
+			if SizeSpecializedMallocEnabled && !noscan {
+				// TODO(thepudds): skip at this point in the stack for size-specialized malloc with !noscan.
+				// Additional integration with sizespecializedmalloc is in a later CL.
+				t.Skip("temporarily skipping alloc tests for GOEXPERIMENT=sizespecializedmalloc for pointer types")
+			}
+			if !RuntimeFreegcEnabled {
+				t.Skip("skipping skipping alloc tests with runtime.freegc disabled")
+			}
+
+			var tZero T
+			tBytes := unsafe.Sizeof(tZero)
+			ptrBytes := unsafe.Sizeof(uintptr(0))
+
+			// Don't bother testing noscan, or odd numbers of pointers in T.
+			// (An odd count of pointers in T would need to be rounded for T2, but
+			// the T2 slice might end up in a different size class, depending on the boundary.)
+			if noscan || (tBytes/ptrBytes)%2 != 0 {
+				return
+			}
+
+			type T2 struct {
+				u uint
+				p *int
+			}
+			allocT2 := func() []T2 {
+				s := make([]T2, (tBytes/ptrBytes)/2)
+				for i := range s {
+					s[i].u = uint(ClobberdeadPtr) // perhaps increase odds of catching pointer confusion
+				}
+				return s
+			}
+			t2Bytes := uintptr(len(allocT2())) * unsafe.Sizeof(T2{})
+
+			type T3 struct {
+				p1 *int
+				p2 *int
+			}
+			allocT3 := func() []T3 {
+				s := make([]T3, (tBytes/ptrBytes)/2)
+				return s
+			}
+			t3Bytes := uintptr(len(allocT3())) * unsafe.Sizeof(T3{})
+
+			if tBytes != t2Bytes || t2Bytes != t3Bytes {
+				t.Fatalf("TestFreeLive: size mismatch: T %d bytes, T2 %d bytes, T3 %d bytes", tBytes, t2Bytes, t3Bytes)
+			}
+
+			// First, test alternating with a T2 slice (which mixes pointer and non-pointer fields).
+			const maxOutstanding = 10
+			s1 := make([]*T, 0, maxOutstanding)
+			s2 := make([][]T2, 0, maxOutstanding)
+			allocs := testing.AllocsPerRun(1000, func() {
+				s1 = s1[:0]
+				s2 = s2[:0]
+				for range maxOutstanding {
+					p1 := alloc()
+					s1 = append(s1, p1)
+					p2 := allocT2()
+					s2 = append(s2, p2)
+				}
+				for i := range s1 {
+					free(s1[i])
+					runtime.Freegc(unsafe.Pointer(unsafe.SliceData(s2[i])), t2Bytes, false) // !noscan
+				}
+			})
+			t.Logf("TestFreeLive: free-alternating-types: T: %d bytes, T2: %d bytes, allocs %v", tBytes, t2Bytes, allocs)
+
+			if allocs > 1 {
+				// To reuse the most memory, we would free in the opposite order of what we do just above,
+				// but we don't free in that order to exercise things a bit more.
+				// In the current order, the last alloc was for a T2 slice, so the
+				// first free of a T1 pointer of size <= 512 bytes can be a mismatch on heap bits,
+				// which means one reusable object might be discarded at the start of the free loop above.
+				// This is why we can get 1 alloc here, though can also get 0 if the reusable objects
+				// are within an mspan still in the mcache.
+				t.Fatalf("expected 0 or 1 allocations, got %v", allocs)
+			}
+
+			// Second, test alternating with a T3 slice (which is all pointers, and
+			// hence is recognized as having same heap bits as T, which is an array).
+			s3 := make([][]T3, 0, maxOutstanding)
+			allocs = testing.AllocsPerRun(1000, func() {
+				s1 = s1[:0]
+				s3 = s3[:0]
+				for range maxOutstanding {
+					p1 := alloc()
+					s1 = append(s1, p1)
+					p3 := allocT3()
+					s3 = append(s3, p3)
+				}
+				for i := range s1 {
+					free(s1[i])
+					runtime.Freegc(unsafe.Pointer(unsafe.SliceData(s3[i])), t3Bytes, false) // !noscan
+				}
+			})
+			t.Logf("TestFreeLive: free-alternating-types: T: %d bytes, T3: %d bytes, allocs %v", tBytes, t3Bytes, allocs)
+
+			if allocs != 0 {
+				// The all pointer slice should allow zero allocs.
+				t.Fatalf("expected 0 allocations, got %v", allocs)
 			}
 		})
 

@@ -1565,11 +1565,68 @@ func mallocgcSmallScanNoHeader(size uintptr, typ *_type) (unsafe.Pointer, uintpt
 	sizeclass := gc.SizeToSizeClass8[divRoundUp(size, gc.SmallSizeDiv)]
 	spc := makeSpanClass(sizeclass, false)
 	span := c.alloc[spc]
-	v := nextFreeFast(span)
+
+	var v gclinkptr
+	var x unsafe.Pointer
+
+	// First, check for a potentially reusable object.
+	if c.hasReusableScan(spc) {
+		// We have special handling for small no header scan objects because we
+		// currently do not have a mechanism to update the heap bits for an object
+		// stored in a span that is no longer in the mcache. (If we were to just
+		// alter the heap bits for a span outside the mcache via heapSetTypeNoHeader, then
+		// for example goroutines could be concurrently altering the heap bits for adjacent objects,
+		// which could clash given the heap bits for multiple objects can be within a single word.)
+		//
+		// nextReusableSmallScanNoHeader verifies that a stored reusable object is
+		// either in an mspan in the mcache (and hence we can update the heap bits), or
+		// has the same heap bits as the object we are trying to allocate and hence
+		// we don't need to update the heap bits to reuse the object. (It might therefore
+		// return 0 if there were stored reusable objects, but not one that could used.)
+		// TODO(thepudds): verify the explanation above is correct.
+		var update bool
+		v, span, update = c.nextReusableScanNoHeader(span, spc, size, typ)
+		if v != 0 {
+			// We have a reusable object, use it.
+			x = unsafe.Pointer(v)
+
+			// This is a previously used object, so always clear (regardless of span.needzero).
+			memclrNoHeapPointers(x, size)
+
+			if update {
+				// TODO(thepudds): is this safe from a conservative scan given freeIndexForScan?
+				heapSetTypeNoHeader(uintptr(x), size, typ, span)
+			}
+
+			size = uintptr(gc.SizeClassToSize[sizeclass])
+
+			// Compensate for the GC assist credit deducted in mallocgc (before calling us and after we return)
+			// because this is not a newly allocated object. We use the full slot size (elemsize) here because
+			// that's what mallocgc deducts overall. Note we only adjust this when gcBlackenEnabled is true,
+			// which follows mallocgc behavior.
+			// TODO(thepudds): a follow-up CL adds a more specific test of our assist credit handling,
+			// including for validating internal fragmentation handling.
+			if gcBlackenEnabled != 0 {
+				addAssistCredit(size)
+			}
+
+			// See publicationBarrier comment below.
+			// TODO(thepudds): do we need this? GC can have already observed this object via prior incarnation.
+			// TODO(thepudds): alternatively, maybe move this up to just before heapSetTypeNoHeader?
+			publicationBarrier()
+
+			// Finish and return.
+			// Note that we do not update span.freeIndexForScan, profiling info,
+			// nor do we check gcTrigger. (checkGCTrigger is still false here.)
+			goto finish
+		}
+	}
+
+	v = nextFreeFast(span)
 	if v == 0 {
 		v, span, checkGCTrigger = c.nextFree(spc)
 	}
-	x := unsafe.Pointer(v)
+	x = unsafe.Pointer(v)
 	if span.needzero != 0 {
 		memclrNoHeapPointers(x, size)
 	}
@@ -1590,24 +1647,6 @@ func mallocgcSmallScanNoHeader(size uintptr, typ *_type) (unsafe.Pointer, uintpt
 	// but see uninitialized memory or stale heap bits.
 	publicationBarrier()
 
-	if writeBarrier.enabled {
-		// Allocate black during GC.
-		// All slots hold nil so no scanning is needed.
-		// This may be racing with GC so do it atomically if there can be
-		// a race marking the bit.
-		gcmarknewobject(span, uintptr(x))
-	} else {
-		// Track the last free index before the mark phase. This field
-		// is only used by the garbage collector. During the mark phase
-		// this is used by the conservative scanner to filter out objects
-		// that are both free and recently-allocated. It's safe to do that
-		// because we allocate-black if the GC is enabled. The conservative
-		// scanner produces pointers out of thin air, so without additional
-		// synchronization it might otherwise observe a partially-initialized
-		// object, which could crash the program.
-		span.freeIndexForScan = span.freeindex
-	}
-
 	// Note cache c only valid while m acquired; see #47302
 	//
 	// N.B. Use the full size because that matches how the GC
@@ -1621,6 +1660,29 @@ func mallocgcSmallScanNoHeader(size uintptr, typ *_type) (unsafe.Pointer, uintpt
 	if c.nextSample < 0 || MemProfileRate != c.memProfRate {
 		profilealloc(mp, x, size)
 	}
+
+	if !writeBarrier.enabled {
+		// Track the last free index before the mark phase. This field
+		// is only used by the garbage collector. During the mark phase
+		// this is used by the conservative scanner to filter out objects
+		// that are both free and recently-allocated. It's safe to do that
+		// because we allocate-black if the GC is enabled. The conservative
+		// scanner produces pointers out of thin air, so without additional
+		// synchronization it might otherwise observe a partially-initialized
+		// object, which could crash the program.
+		span.freeIndexForScan = span.freeindex
+	}
+
+finish:
+
+	if writeBarrier.enabled {
+		// Allocate black during GC.
+		// All slots hold nil so no scanning is needed.
+		// This may be racing with GC so do it atomically if there can be
+		// a race marking the bit.
+		gcmarknewobject(span, uintptr(x))
+	}
+
 	mp.mallocing = 0
 	releasem(mp)
 
@@ -1663,17 +1725,63 @@ func mallocgcSmallScanHeader(size uintptr, typ *_type) (unsafe.Pointer, uintptr)
 	size = uintptr(gc.SizeClassToSize[sizeclass])
 	spc := makeSpanClass(sizeclass, false)
 	span := c.alloc[spc]
-	v := nextFreeFast(span)
+
+	var v gclinkptr
+	var x unsafe.Pointer
+
+	// First, check for a reusable object.
+	// TODO(thepudds): could nextFreeFast, nextFree and nextReusable return unsafe.Pointer? Maybe doesn't matter. Prob some reason for current sig.
+	if c.hasReusableScan(spc) {
+		// We have a reusable object, use it.
+		v, span = c.nextReusableScanHeader(span, spc)
+		x = unsafe.Pointer(v)
+
+		// Compensate for the GC assist credit deducted in mallocgc (before calling us and after we return)
+		// because this is not a newly allocated object. We use the full slot size (elemsize) here because
+		// that's what mallocgc deducts overall. Note we only adjust this when gcBlackenEnabled is true,
+		// which follows mallocgc behavior.
+		// TODO(thepudds): a follow-up CL adds a more specific test of our assist credit handling,
+		// including for validating internal fragmentation handling.
+		if gcBlackenEnabled != 0 {
+			addAssistCredit(size)
+		}
+
+		// Object is being reused. Clear it, but leave the header alone so that the GC won't see a nil type.
+		// The header then gets set below to the new type in heapSetTypeSmallHeader.
+		// TODO: This might be a Bad Idea™. Normally, the GC would not have an
+		// in-flight observation of this object, but when reusing, it might,
+		// so if we don't leave the type alone here, the GC could see a nil type between
+		// the memclrNoHeapPointers call and the heapSetTypeSmallHeader call below
+		// and deref the nil or throw. (We saw a problem with typePointersOfUnchecked
+		// seeing a nil type, but maybe elsewhere could be unhappy too).
+		// Alternatively, we could let the GC see the nil type and ignore it, though that
+		// might be worse in terms of sanity checking for other potential problems.
+		// TODO: add comment about conservative scanning.
+		memclrNoHeapPointers(add(x, mallocHeaderSize), size-mallocHeaderSize)
+
+		header := (**_type)(x)
+		x = add(x, mallocHeaderSize)
+		// TODO(thepudds): what to do about c.scanAlloc? Probably should not increment here?
+		heapSetTypeSmallHeader(uintptr(x), size-mallocHeaderSize, typ, header, span)
+
+		// See publicationBarrier comment below.
+		// TODO(thepudds): do we need this? GC can have already observed this object this cycle via prior incarnation?
+		publicationBarrier()
+
+		goto finish
+	}
+
+	v = nextFreeFast(span)
 	if v == 0 {
 		v, span, checkGCTrigger = c.nextFree(spc)
 	}
-	x := unsafe.Pointer(v)
+	x = unsafe.Pointer(v)
 	if span.needzero != 0 {
 		memclrNoHeapPointers(x, size)
 	}
-	header := (**_type)(x)
 	x = add(x, gc.MallocHeaderSize)
-	c.scanAlloc += heapSetTypeSmallHeader(uintptr(x), size-gc.MallocHeaderSize, typ, header, span)
+	// TODO(thepudds): we don't use header variable for now to make goto happy.
+	c.scanAlloc += heapSetTypeSmallHeader(uintptr(x), size-gc.MallocHeaderSize, typ, (**_type)(unsafe.Pointer(uintptr(x)-gc.MallocHeaderSize)), span)
 
 	// Ensure that the stores above that initialize x to
 	// type-safe memory and set the heap bits occur before
@@ -1682,24 +1790,6 @@ func mallocgcSmallScanHeader(size uintptr, typ *_type) (unsafe.Pointer, uintptr)
 	// the garbage collector could follow a pointer to x,
 	// but see uninitialized memory or stale heap bits.
 	publicationBarrier()
-
-	if writeBarrier.enabled {
-		// Allocate black during GC.
-		// All slots hold nil so no scanning is needed.
-		// This may be racing with GC so do it atomically if there can be
-		// a race marking the bit.
-		gcmarknewobject(span, uintptr(x))
-	} else {
-		// Track the last free index before the mark phase. This field
-		// is only used by the garbage collector. During the mark phase
-		// this is used by the conservative scanner to filter out objects
-		// that are both free and recently-allocated. It's safe to do that
-		// because we allocate-black if the GC is enabled. The conservative
-		// scanner produces pointers out of thin air, so without additional
-		// synchronization it might otherwise observe a partially-initialized
-		// object, which could crash the program.
-		span.freeIndexForScan = span.freeindex
-	}
 
 	// Note cache c only valid while m acquired; see #47302
 	//
@@ -1714,6 +1804,29 @@ func mallocgcSmallScanHeader(size uintptr, typ *_type) (unsafe.Pointer, uintptr)
 	if c.nextSample < 0 || MemProfileRate != c.memProfRate {
 		profilealloc(mp, x, size)
 	}
+
+	if !writeBarrier.enabled {
+		// Track the last free index before the mark phase. This field
+		// is only used by the garbage collector. During the mark phase
+		// this is used by the conservative scanner to filter out objects
+		// that are both free and recently-allocated. It's safe to do that
+		// because we allocate-black if the GC is enabled. The conservative
+		// scanner produces pointers out of thin air, so without additional
+		// synchronization it might otherwise observe a partially-initialized
+		// object, which could crash the program.
+		span.freeIndexForScan = span.freeindex
+	}
+
+finish:
+
+	if writeBarrier.enabled {
+		// Allocate black during GC.
+		// All slots hold nil so no scanning is needed.
+		// This may be racing with GC so do it atomically if there can be
+		// a race marking the bit.
+		gcmarknewobject(span, uintptr(x))
+	}
+
 	mp.mallocing = 0
 	releasem(mp)
 
@@ -2023,6 +2136,8 @@ func freegc(ptr unsafe.Pointer, size uintptr, noscan bool) bool {
 	}
 
 	if debug.clobberfree != 0 {
+		// TODO(thepudds): for now, we use the passed in size. For a "real" version of clobberfree, we probably should use
+		// the proper size of the underlying object, and maybe throw if passed in size is outside legal bounds.
 		clobberfree(ptr, size)
 	}
 
@@ -2033,7 +2148,7 @@ func freegc(ptr unsafe.Pointer, size uintptr, noscan bool) bool {
 		throw("freegc called without a P or outside bootstrapping")
 	}
 
-	v := uintptr(ptr)
+	v := uintptr(ptr) // TODO: prob gclinkptr?
 	if !noscan && !heapBitsInSpan(size) {
 		// mallocgcSmallScanHeader expects to get the base address of the object back
 		// from the findReusable funcs (as well as from nextFreeFast and nextFree), and
@@ -2041,6 +2156,7 @@ func freegc(ptr unsafe.Pointer, size uintptr, noscan bool) bool {
 		v -= mallocHeaderSize
 
 		// The size class lookup wants size to be adjusted by mallocHeaderSize.
+		// TODO: is that true?
 		size += mallocHeaderSize
 	}
 
@@ -2052,7 +2168,8 @@ func freegc(ptr unsafe.Pointer, size uintptr, noscan bool) bool {
 	} else {
 		sizeclass = gc.SizeToSizeClass128[divRoundUp(size-gc.SmallSizeMax, gc.LargeSizeDiv)]
 	}
-
+	// TODO: minor note: we currently don't do 'size = uintptr(gc.SizeClassToSize[sizeclass])', but might want to do that
+	// if we rely more heavily on size in future (or maybe for logging).
 	spc := makeSpanClass(sizeclass, noscan)
 	s := c.alloc[spc]
 
@@ -2067,8 +2184,7 @@ func freegc(ptr unsafe.Pointer, size uintptr, noscan bool) bool {
 	if noscan {
 		c.addReusableNoscan(spc, uintptr(v))
 	} else {
-		// TODO(thepudds): implemented in later CL in our stack.
-		throw("freegc called for object with pointers, not yet implemented")
+		c.addReusableScan(spc, uintptr(v))
 	}
 
 	// For stats, for now we leave allocCount alone, roughly pretending to the rest
@@ -2120,6 +2236,129 @@ func (c *mcache) nextReusableNoScan(s *mspan, spc spanClass) (gclinkptr, *mspan)
 	}
 
 	return v, span
+}
+
+// nextReusableScanHeader returns the next reusable object for a span with headers,
+// or 0 if no reusable object is found.
+//
+// It must only be called after hasReusableScan returned true.
+func (c *mcache) nextReusableScanHeader(s *mspan, spc spanClass) (gclinkptr, *mspan) {
+	if !runtimeFreegcEnabled || c.reusableScan[spc] == 0 {
+		// TODO(thepudds): checking for nil is redundant here if we assume hasReusable returned true.
+		return 0, s
+	}
+
+	// Pop a reusable pointer.
+	rl := c.reusableLink(spc)
+	v := gclinkptr(rl.ptrs[rl.len-1])
+	rl.len--
+
+	if v == 0 {
+		throw("nextReusable: nil from ptr list")
+	}
+
+	if debugReusableLog {
+		println("reusing from ptr list:", hex(v), "sweepgen:", mheap_.sweepgen, "writeBarrier.enabled:", writeBarrier.enabled)
+	}
+	if doubleCheckReusable {
+		doubleCheckNextReusable(v) // debug only sanity check
+	}
+
+	if s.base() <= uintptr(v) && uintptr(v) < s.limit {
+		// The pointer is in an span in the mcache, so we can use it without looking up the span.
+		return v, s
+	}
+
+	// We need to find and return the span so that our caller can gcmarknewobject if needed, update heap bits, etc.
+	span := spanOf(uintptr(v))
+	if span == nil {
+		throw("nextReusable: nil span for pointer in reusablePtrs free list")
+	}
+
+	return v, span
+}
+
+// nextReusableScanNoHeader is like nextReusableScanHeader, but for noheader spans, and
+// for any reusable object that is outside of an mspan currently in mcache, it only returns
+// objects that can be reused without updating the heap bits. In other words, before returning
+// a reusable object outside the mcache, it verifies that the heap bits for
+// the object in its span are equivalent to what would be needed to allocate
+// an object with the requested size and typ.
+//
+// The update bool reports whether the heap bits should be updated.
+//
+// This must only be called after hasReusableScan returned true.
+//
+// TODO(thepudds): this is probably not exactly what we'd want to do for real, but this is
+// at least a concrete demonstration of avoiding the problem of not currently
+// being able to update heap bits for a reused object outside the mcache. For
+// a perfectly unfavorable app alloc/free pattern, this might essentially decay to
+// just reusing objects from an mspan currently in mcache. An alternative
+// would be to just always do that for noheader scan objects, which are smaller,
+// and hence have more objects per span -- 512 objects for 16-byte objects
+// through ~16 objects for the largest noheader objects. In other words,
+// this is generally more to work with within the mcache for noheader scan objects,
+// so maybe it is a reasonable choice to restrict noheader objects to the mcache.
+func (c *mcache) nextReusableScanNoHeader(s *mspan, spc spanClass, size uintptr, typ *_type) (v gclinkptr, span *mspan, update bool) {
+	if !runtimeFreegcEnabled || c.reusableScan[spc] == 0 {
+		// TODO(thepudds): checking for nil is redundant here if we assume hasReusable returned true.
+		return 0, s, false
+	}
+
+	rl := c.reusableLink(spc)
+
+	maxDiscard := 4
+	for rl.len > 0 && maxDiscard > 0 {
+		// Pop a reusable pointer, then validate if we can reuse.
+		// We can reuse if still in an mspan in the mcache (which means we can
+		// mutate the heap bits as needed) or if the heap bits match what we need.
+		// If not reusable, keep popping and discarding.
+		// TODO(thepudds): it's debatable how many we should discard before giving up, and whether
+		// it might make sense to scan more than we discard. There is a CPU cost for each one we examine.
+		// There also can be lost reuse opportunities if we throw too many away. For now, somewhat arbitrarily
+		// we discard at most 4 or however many are in this link. The typical count examined in practice
+		// might be something like 1-2? (e.g. if a there's a heap bit pattern that dominates this span class,
+		// or if it discards its way down to mostly staying within the mcache).
+		v = gclinkptr(rl.ptrs[rl.len-1])
+		rl.len--
+		maxDiscard--
+
+		if v == 0 {
+			throw("nextReusable: nil from ptr list")
+		}
+
+		if debugReusableLog {
+			println("reusing from ptr list:", hex(v), "sweepgen:", mheap_.sweepgen, "writeBarrier.enabled:", writeBarrier.enabled)
+		}
+		if doubleCheckReusable {
+			doubleCheckNextReusable(v) // debug only sanity check
+		}
+
+		if s.base() <= uintptr(v) && uintptr(v) < s.limit {
+			// The pointer is in an span in the mcache, so we can use that span without calling spanOf,
+			// but we need to update the heap bits.
+			return v, s, true
+		}
+
+		// We need to find and return the span so that our caller can gcmarknewobject if needed, update heap bits, etc.
+		span = spanOf(uintptr(v))
+		if span == nil {
+			throw("nextReusable: nil span for pointer in reusablePtrs free list")
+		}
+
+		// Confirm this reusable object can be used for this size and type without
+		// updating any heap bits. (See this function's doc comment).
+		if !span.heapBitsSmallMatchesType(uintptr(v), size, typ) {
+			continue
+		}
+
+		// We found a usable pointer, and we don't need to update the heap bits.
+		return v, span, false
+	}
+
+	// We popped all the pointers in this link or maxDiscard, but none were usable.
+	// Return the original span.
+	return 0, s, false
 }
 
 // doubleCheckNextReusable checks some invariants.

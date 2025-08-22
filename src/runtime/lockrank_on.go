@@ -162,6 +162,8 @@ func checkRanks(gp *g, prevRank, rank lockRank) {
 	if !rankOK {
 		printlock()
 		println(gp.m.procid, " ======")
+		println("checked lock ranks for lock of rank ", rank.String(), " (", rank, ") while holding lock of rank ", prevRank.String(), " (", prevRank, ")")
+		println("held locks:")
 		printHeldLocks(gp)
 		throw("lock ordering problem")
 	}
