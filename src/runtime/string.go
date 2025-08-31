@@ -60,19 +60,131 @@ func concatstrings(buf *tmpBuf, a []string) string {
 }
 
 func concatstring2(buf *tmpBuf, a0, a1 string) string {
-	return concatstrings(buf, []string{a0, a1})
+	l := len(a0) + len(a1)
+	if l == 0 {
+		return ""
+	} else if l < len(a0) {
+		throw("string concatenation too long")
+	}
+	var a string
+	switch {
+	case l == len(a0):
+		a = a0
+	case l == len(a1):
+		a = a1
+	default:
+		goto do_concat
+	}
+	if buf != nil || !stringDataOnStack(a) {
+		return a
+	}
+do_concat:
+	s, b := rawstringtmp(buf, l)
+	b = b[copy(b, a0):]
+	b = b[copy(b, a1):]
+	return s
 }
 
 func concatstring3(buf *tmpBuf, a0, a1, a2 string) string {
-	return concatstrings(buf, []string{a0, a1, a2})
+	l, c := adc(len(a0), len(a1), 0)
+	l, c = adc(l, len(a2), c)
+	if l == 0 {
+		return ""
+	} else if c != 0 {
+		throw("string concatenation too long")
+	}
+	var a string
+	switch {
+	case l == len(a0):
+		a = a0
+	case l == len(a1):
+		a = a1
+	case l == len(a2):
+		a = a2
+	default:
+		goto do_concat
+	}
+	if buf != nil || !stringDataOnStack(a) {
+		return a
+	}
+do_concat:
+	s, b := rawstringtmp(buf, l)
+	b = b[copy(b, a0):]
+	b = b[copy(b, a1):]
+	b = b[copy(b, a2):]
+	return s
 }
 
 func concatstring4(buf *tmpBuf, a0, a1, a2, a3 string) string {
-	return concatstrings(buf, []string{a0, a1, a2, a3})
+	l, c := adc(len(a0), len(a1), 0)
+	l, c = adc(l, len(a2), c)
+	l, c = adc(l, len(a3), c)
+	if l == 0 {
+		return ""
+	} else if c != 0 {
+		throw("string concatenation too long")
+	}
+	var a string
+	switch {
+	case l == len(a0):
+		a = a0
+	case l == len(a1):
+		a = a1
+	case l == len(a2):
+		a = a2
+	case l == len(a3):
+		a = a3
+	default:
+		goto do_concat
+	}
+	if buf != nil || !stringDataOnStack(a) {
+		return a
+	}
+do_concat:
+	s, b := rawstringtmp(buf, l)
+	b = b[copy(b, a0):]
+	b = b[copy(b, a1):]
+	b = b[copy(b, a2):]
+	b = b[copy(b, a3):]
+	return s
 }
 
 func concatstring5(buf *tmpBuf, a0, a1, a2, a3, a4 string) string {
-	return concatstrings(buf, []string{a0, a1, a2, a3, a4})
+	l, c := adc(len(a0), len(a1), 0)
+	l, c = adc(l, len(a2), c)
+	l, c = adc(l, len(a3), c)
+	l, c = adc(l, len(a4), c)
+	if l == 0 {
+		return ""
+	} else if c != 0 {
+		throw("string concatenation too long")
+	}
+	var a string
+	switch {
+	case l == len(a0):
+		a = a0
+	case l == len(a1):
+		a = a1
+	case l == len(a2):
+		a = a2
+	case l == len(a3):
+		a = a3
+	case l == len(a4):
+		a = a4
+	default:
+		goto do_concat
+	}
+	if buf != nil || !stringDataOnStack(a) {
+		return a
+	}
+do_concat:
+	s, b := rawstringtmp(buf, l)
+	b = b[copy(b, a0):]
+	b = b[copy(b, a1):]
+	b = b[copy(b, a2):]
+	b = b[copy(b, a3):]
+	b = b[copy(b, a4):]
+	return s
 }
 
 // concatbytes implements a Go string concatenation x+y+z+... returning a slice
@@ -109,19 +221,96 @@ func concatbytes(buf *tmpBuf, a []string) []byte {
 }
 
 func concatbyte2(buf *tmpBuf, a0, a1 string) []byte {
-	return concatbytes(buf, []string{a0, a1})
+	l := len(a0) + len(a1)
+	if l == 0 {
+		return []byte{}
+	} else if l < len(a0) {
+		throw("string concatenation too long")
+	}
+	var b []byte
+	if buf != nil && l <= len(buf) {
+		*buf = tmpBuf{}
+		b = buf[:l]
+	} else {
+		b = rawbyteslice(l)
+	}
+	b = b[copy(b, a0):]
+	b = b[copy(b, a1):]
+	return b
 }
 
 func concatbyte3(buf *tmpBuf, a0, a1, a2 string) []byte {
-	return concatbytes(buf, []string{a0, a1, a2})
+	l, c := adc(len(a0), len(a1), 0)
+	l, c = adc(l, len(a2), c)
+	if l == 0 {
+		return []byte{}
+	} else if l < len(a0) {
+		throw("string concatenation too long")
+	}
+	var b []byte
+	if buf != nil && l <= len(buf) {
+		*buf = tmpBuf{}
+		b = buf[:l]
+	} else {
+		b = rawbyteslice(l)
+	}
+	b = b[copy(b, a0):]
+	b = b[copy(b, a1):]
+	b = b[copy(b, a2):]
+	return b
 }
 
 func concatbyte4(buf *tmpBuf, a0, a1, a2, a3 string) []byte {
-	return concatbytes(buf, []string{a0, a1, a2, a3})
+	l, c := adc(len(a0), len(a1), 0)
+	l, c = adc(l, len(a2), c)
+	l, c = adc(l, len(a3), c)
+	if l == 0 {
+		return []byte{}
+	} else if l < len(a0) {
+		throw("string concatenation too long")
+	}
+	var b []byte
+	if buf != nil && l <= len(buf) {
+		*buf = tmpBuf{}
+		b = buf[:l]
+	} else {
+		b = rawbyteslice(l)
+	}
+	b = b[copy(b, a0):]
+	b = b[copy(b, a1):]
+	b = b[copy(b, a2):]
+	b = b[copy(b, a3):]
+	return b
 }
 
 func concatbyte5(buf *tmpBuf, a0, a1, a2, a3, a4 string) []byte {
-	return concatbytes(buf, []string{a0, a1, a2, a3, a4})
+	l, c := adc(len(a0), len(a1), 0)
+	l, c = adc(l, len(a2), c)
+	l, c = adc(l, len(a3), c)
+	l, c = adc(l, len(a4), c)
+	if l == 0 {
+		return []byte{}
+	} else if l < len(a0) {
+		throw("string concatenation too long")
+	}
+	var b []byte
+	if buf != nil && l <= len(buf) {
+		*buf = tmpBuf{}
+		b = buf[:l]
+	} else {
+		b = rawbyteslice(l)
+	}
+	b = b[copy(b, a0):]
+	b = b[copy(b, a1):]
+	b = b[copy(b, a2):]
+	b = b[copy(b, a3):]
+	b = b[copy(b, a4):]
+	return b
+}
+
+func adc(a, b, c int) (int, int) {
+	_s, _c := math.Add64(uint64(a), uint64(b), uint64(c))
+	return int(_s), int(_c)
 }
 
 // slicebytetostring converts a byte slice to a string.
