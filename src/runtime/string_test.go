@@ -5,6 +5,7 @@
 package runtime_test
 
 import (
+	"fmt"
 	"runtime"
 	"strconv"
 	"strings"
@@ -88,6 +89,63 @@ func BenchmarkConcatStringAndBytes(b *testing.B) {
 	s1 := []byte("Gophers!")
 	for i := 0; i < b.N; i++ {
 		_ = "Hello " + string(s1)
+	}
+}
+
+func BenchmarkConcatStrings(b *testing.B) {
+	cases := [][]string{
+		{"", ""}, {"Hello, world!", ""}, {"Hello, ", "world!"},
+		{"", "", ""}, {"Hello, world!", "", ""}, {"Hello, ", "", "world!"}, {"Hello", ", ", "world!"},
+		{"", "", "", ""}, {"Hello, world!", "", "", ""}, {"Hello, ", "", "", "world!"}, {"Hello", ", ", "", "world!"}, {"Hello", ", ", "world", "!"},
+		{"", "", "", "", ""}, {"Hello, world!", "", "", "", ""}, {"Hello, ", "", "", "", "world!"}, {"Hello", "", ", ", "", "world!"}, {"Hello", ",", " ", "", "world!"}, {"Hello", ",", " ", "world", "!"},
+		{"", "", "", "", "", ""}, {"Hello, world!", "", "", "", "", ""}, {"Hello, ", "", "", "", "", "world!"}, {"Hello", "", ", ", "", "", "world!"}, {"Hello", ",", "", " ", "", "world!"}, {"Hello", ",", "", " ", "world", "!"}, {"H", "ello", ",", " ", "world", "!"},
+	}
+	for i, c := range cases {
+		var f func(*testing.B)
+		switch len(c) {
+		case 2:
+			f = func(b *testing.B) {
+				s0, s1 := c[0], c[1]
+				for b.Loop() {
+					_ = s0 + s1
+				}
+			}
+		case 3:
+			f = func(b *testing.B) {
+				s0, s1, s2 := c[0], c[1], c[2]
+				for b.Loop() {
+					_ = s0 + s1 + s2
+				}
+			}
+		case 4:
+			f = func(b *testing.B) {
+				s0, s1, s2, s3 := c[0], c[1], c[2], c[3]
+				for b.Loop() {
+					_ = s0 + s1 + s2 + s3
+				}
+			}
+		case 5:
+			f = func(b *testing.B) {
+				s0, s1, s2, s3, s4 := c[0], c[1], c[2], c[3], c[4]
+				for b.Loop() {
+					_ = s0 + s1 + s2 + s3 + s4
+				}
+			}
+		case 6:
+			f = func(b *testing.B) {
+				s0, s1, s2, s3, s4, s5 := c[0], c[1], c[2], c[3], c[4], c[5]
+				for b.Loop() {
+					_ = s0 + s1 + s2 + s3 + s4 + s5
+				}
+			}
+		}
+		e := 0
+		for _, s := range c {
+			if s == "" {
+				e++
+			}
+		}
+		b.Run(fmt.Sprintf("%d/%d/%d", i, len(c), e), f)
 	}
 }
 

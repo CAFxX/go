@@ -60,54 +60,142 @@ func concatstrings(buf *tmpBuf, a []string) string {
 }
 
 func concatstring2(buf *tmpBuf, a0, a1 string) string {
-	l := len(a0) + len(a1)
-	if l == 0 {
+	if a0 == "" {
+		if a1 == "" {
+			return ""
+		}
+		return concatstring1ne(buf, a1)
+	} else if a1 == "" {
+		return concatstring1ne(buf, a0)
+	}
+	return concatstring2ne(buf, a0, a1)
+}
+
+func concatstring3(buf *tmpBuf, a0, a1, a2 string) string {
+	n := 3
+	if a2 == "" {
+		n--
+	}
+	if a1 == "" {
+		n--
+		a1 = a2
+	}
+	if a0 == "" {
+		n--
+		a0, a1 = a1, a2
+	}
+	switch n {
+	case 0:
 		return ""
-	} else if l < len(a0) {
+	case 1:
+		return concatstring1ne(buf, a0)
+	case 2:
+		return concatstring2ne(buf, a0, a1)
+	case 3:
+		return concatstring3ne(buf, a0, a1, a2)
+	}
+	throw("unreachable")
+	return ""
+}
+
+func concatstring4(buf *tmpBuf, a0, a1, a2, a3 string) string {
+	n := 4
+	if a3 == "" {
+		n--
+	}
+	if a2 == "" {
+		n--
+		a2 = a3
+	}
+	if a1 == "" {
+		n--
+		a1, a2 = a2, a3
+	}
+	if a0 == "" {
+		n--
+		a0, a1, a2 = a1, a2, a3
+	}
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return concatstring1ne(buf, a0)
+	case 2:
+		return concatstring2ne(buf, a0, a1)
+	case 3:
+		return concatstring3ne(buf, a0, a1, a2)
+	case 4:
+		return concatstring4ne(buf, a0, a1, a2, a3)
+	}
+	throw("unreachable")
+	return ""
+}
+
+func concatstring5(buf *tmpBuf, a0, a1, a2, a3, a4 string) string {
+	n := 5
+	if a4 == "" {
+		n--
+	}
+	if a3 == "" {
+		n--
+		a3 = a4
+	}
+	if a2 == "" {
+		n--
+		a2, a3 = a3, a4
+	}
+	if a1 == "" {
+		n--
+		a1, a2, a3 = a2, a3, a4
+	}
+	if a0 == "" {
+		n--
+		a0, a1, a2, a3 = a1, a2, a3, a4
+	}
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return concatstring1ne(buf, a0)
+	case 2:
+		return concatstring2ne(buf, a0, a1)
+	case 3:
+		return concatstring3ne(buf, a0, a1, a2)
+	case 4:
+		return concatstring4ne(buf, a0, a1, a2, a3)
+	case 5:
+		return concatstring5ne(buf, a0, a1, a2, a3, a4)
+	}
+	throw("unreachable")
+	return ""
+}
+
+func concatstring1ne(buf *tmpBuf, a0 string) string {
+	if buf != nil || !stringDataOnStack(a0) {
+		return a0
+	}
+	s, b := rawstringtmp(buf, len(a0))
+	b = b[copy(b, a0):]
+	return s
+}
+
+func concatstring2ne(buf *tmpBuf, a0, a1 string) string {
+	l := len(a0) + len(a1)
+	if l < len(a0) {
 		throw("string concatenation too long")
 	}
-	var a string
-	switch {
-	case l == len(a0):
-		a = a0
-	case l == len(a1):
-		a = a1
-	default:
-		goto do_concat
-	}
-	if buf != nil || !stringDataOnStack(a) {
-		return a
-	}
-do_concat:
 	s, b := rawstringtmp(buf, l)
 	b = b[copy(b, a0):]
 	b = b[copy(b, a1):]
 	return s
 }
 
-func concatstring3(buf *tmpBuf, a0, a1, a2 string) string {
+func concatstring3ne(buf *tmpBuf, a0, a1, a2 string) string {
 	l, c := adc(len(a0), len(a1), 0)
 	l, c = adc(l, len(a2), c)
-	if l == 0 {
-		return ""
-	} else if c != 0 {
+	if c != 0 {
 		throw("string concatenation too long")
 	}
-	var a string
-	switch {
-	case l == len(a0):
-		a = a0
-	case l == len(a1):
-		a = a1
-	case l == len(a2):
-		a = a2
-	default:
-		goto do_concat
-	}
-	if buf != nil || !stringDataOnStack(a) {
-		return a
-	}
-do_concat:
 	s, b := rawstringtmp(buf, l)
 	b = b[copy(b, a0):]
 	b = b[copy(b, a1):]
@@ -115,32 +203,13 @@ do_concat:
 	return s
 }
 
-func concatstring4(buf *tmpBuf, a0, a1, a2, a3 string) string {
+func concatstring4ne(buf *tmpBuf, a0, a1, a2, a3 string) string {
 	l, c := adc(len(a0), len(a1), 0)
 	l, c = adc(l, len(a2), c)
 	l, c = adc(l, len(a3), c)
-	if l == 0 {
-		return ""
-	} else if c != 0 {
+	if c != 0 {
 		throw("string concatenation too long")
 	}
-	var a string
-	switch {
-	case l == len(a0):
-		a = a0
-	case l == len(a1):
-		a = a1
-	case l == len(a2):
-		a = a2
-	case l == len(a3):
-		a = a3
-	default:
-		goto do_concat
-	}
-	if buf != nil || !stringDataOnStack(a) {
-		return a
-	}
-do_concat:
 	s, b := rawstringtmp(buf, l)
 	b = b[copy(b, a0):]
 	b = b[copy(b, a1):]
@@ -149,35 +218,14 @@ do_concat:
 	return s
 }
 
-func concatstring5(buf *tmpBuf, a0, a1, a2, a3, a4 string) string {
+func concatstring5ne(buf *tmpBuf, a0, a1, a2, a3, a4 string) string {
 	l, c := adc(len(a0), len(a1), 0)
 	l, c = adc(l, len(a2), c)
 	l, c = adc(l, len(a3), c)
 	l, c = adc(l, len(a4), c)
-	if l == 0 {
-		return ""
-	} else if c != 0 {
+	if c != 0 {
 		throw("string concatenation too long")
 	}
-	var a string
-	switch {
-	case l == len(a0):
-		a = a0
-	case l == len(a1):
-		a = a1
-	case l == len(a2):
-		a = a2
-	case l == len(a3):
-		a = a3
-	case l == len(a4):
-		a = a4
-	default:
-		goto do_concat
-	}
-	if buf != nil || !stringDataOnStack(a) {
-		return a
-	}
-do_concat:
 	s, b := rawstringtmp(buf, l)
 	b = b[copy(b, a0):]
 	b = b[copy(b, a1):]
