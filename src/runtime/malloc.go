@@ -101,6 +101,7 @@
 package runtime
 
 import (
+	"internal/abi"
 	"internal/goarch"
 	"internal/goexperiment"
 	"internal/goos"
@@ -2194,6 +2195,42 @@ func freegc(ptr unsafe.Pointer, size uintptr, noscan bool) bool {
 	releasem(mp)
 
 	return true
+}
+
+// freegcSlice records that the backing array for a slice is reusable and
+// available for immediate reuse in a subsequent mallocgc allocation.
+// It is a convenience wrapper function over freegc.
+//
+// sl must contain a pointer to a slice (that is, *[]T), and the slice header
+// is zeroed before freegcSlice returns. sl is an interface to aid with
+// finding the type.
+//
+// The slice data pointer must point to the base of the heap object (that is,
+// not resliced to the middle of the heap object). See freegc
+// for additional requirements.
+func freegcSlice(sl any) {
+	i := efaceOf(&sl)
+
+	capacity := (*slice)(i.data).cap
+	if capacity == 0 {
+		return
+	}
+
+	// Find the slice element type.
+	typ := (*_type)(abi.NoEscape(unsafe.Pointer(i._type))) // runtime types are never freed
+	if typ.Kind() != abi.Pointer {
+		throw("slice result of non-ptr type")
+	}
+	typ = (*ptrtype)(unsafe.Pointer(typ)).Elem
+	if typ.Kind() != abi.Slice {
+		throw("slice of non-ptr-to-slice type")
+	}
+	typ = (*slicetype)(unsafe.Pointer(typ)).Elem // slice element type
+
+	// Free the backing array.
+	noscan := !typ.Pointers()
+	freegc((*slice)(i.data).array, uintptr(capacity)*typ.Size_, noscan)
+	*((*slice)(i.data)) = slice{}
 }
 
 // nextReusableNoScan returns the next reusable object for a noscan span,
