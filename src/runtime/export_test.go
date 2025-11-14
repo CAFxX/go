@@ -1983,3 +1983,8 @@ func TraceStack(gp *G, tab *TraceStackTable) {
 var DebugDecorateMappings = &debug.decoratemappings
 
 func SetVMANameSupported() bool { return setVMANameSupported() }
+
+func ChanBuf(c any) bool {
+	ch := (*hchan)(efaceOf(&c).data)
+	return ch.buf != nil
+}

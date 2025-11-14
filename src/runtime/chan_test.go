@@ -830,6 +830,47 @@ func BenchmarkMakeChan(b *testing.B) {
 	})
 }
 
+func TestChanDropBuffersEmptyAtClose(t *testing.T) {
+	c := make(chan int, 10)
+	if !runtime.ChanBuf(c) {
+		t.Fatal("nil buffer after make")
+	}
+	close(c)
+	if runtime.ChanBuf(c) {
+		t.Error("non-nil buffer after close of empty channel")
+	}
+	<-c                      // should not panic with nil buffer
+	if l := len(c); l != 0 { // should not panic with nil buffer
+		t.Errorf("incorrect length: %d", l)
+	}
+	if n := cap(c); n != 10 { // should not panic with nil buffer
+		t.Errorf("incorrect capacity: %d", n)
+	}
+}
+
+func TestChanDropBuffersNonEmptyAtClose(t *testing.T) {
+	c := make(chan int, 10)
+	if !runtime.ChanBuf(c) {
+		t.Fatal("nil buffer after make")
+	}
+	c <- 42
+	close(c)
+	if !runtime.ChanBuf(c) {
+		t.Error("nil buffer after close of non-empty channel")
+	}
+	<-c
+	if runtime.ChanBuf(c) {
+		t.Error("non-nil buffer after last read of closed channel")
+	}
+	<-c                      // should not panic with nil buffer
+	if l := len(c); l != 0 { // should not panic with nil buffer
+		t.Errorf("incorrect length: %d", l)
+	}
+	if n := cap(c); n != 10 { // should not panic with nil buffer
+		t.Errorf("incorrect capacity: %d", n)
+	}
+}
+
 func BenchmarkChanNonblocking(b *testing.B) {
 	myc := make(chan int)
 	b.RunParallel(func(pb *testing.PB) {

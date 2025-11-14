@@ -2057,7 +2057,7 @@ const (
 // The intended caller is the compiler.
 //
 // Note: please do not send changes that attempt to add freegc calls
-// to the standard library.
+// to the standard library (outside of runtime).
 //
 // ptr must point to a heap object or into the current g's stack,
 // in which case freegc is a no-op. In particular, ptr must not point

@@ -100,10 +100,17 @@ func makechan(t *chantype, size int) *hchan {
 		// Race detector uses this location for synchronization.
 		c.buf = c.raceaddr()
 	case !elem.Pointers():
-		// Elements do not contain pointers.
-		// Allocate hchan and buf in one call.
-		c = (*hchan)(mallocgc(hchanSize+mem, nil, true))
-		c.buf = add(unsafe.Pointer(c), hchanSize)
+		if runtimeFreegcEnabled && reusableSize(mem) {
+			// Elements do not contain pointers but we will recycle the
+			// buffer, so we allocate the buffer separately.
+			c = new(hchan)
+			c.buf = mallocgc(mem, nil, true)
+		} else {
+			// Elements do not contain pointers.
+			// Allocate hchan and buf in one call.
+			c = (*hchan)(mallocgc(hchanSize+mem, nil, true))
+			c.buf = add(unsafe.Pointer(c), hchanSize)
+		}
 	default:
 		// Elements contain pointers.
 		c = new(hchan)
@@ -475,6 +482,17 @@ func closechan(c *hchan) {
 		}
 		glist.push(gp)
 	}
+
+	// If the channel is empty we can immediately drop/recycle the backing array;
+	// otherwise the reader of the last element in the channel will do it later.
+	if c.qcount == 0 {
+		size := uintptr(c.dataqsiz) * c.elemtype.Size_
+		if runtimeFreegcEnabled && reusableSize(size) {
+			defer freegc(c.buf, size, !c.elemtype.Pointers()) // after unlock
+		}
+		c.buf = nil
+	}
+
 	unlock(&c.lock)
 
 	// Ready all Gs now that we've dropped the channel lock.
@@ -624,6 +642,15 @@ func chanrecv(c *hchan, ep unsafe.Pointer, block bool) (selected, received bool)
 			c.recvx = 0
 		}
 		c.qcount--
+		// If the channel is closed and we just recevied the last element
+		// then we can drop/recycle the backing array.
+		if c.closed != 0 && c.qcount == 0 {
+			size := uintptr(c.dataqsiz) * c.elemtype.Size_
+			if runtimeFreegcEnabled && reusableSize(size) {
+				defer freegc(c.buf, size, !c.elemtype.Pointers()) // after unlock
+			}
+			c.buf = nil
+		}
 		unlock(&c.lock)
 		return true, true
 	}
