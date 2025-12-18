@@ -5,6 +5,7 @@
 package slices_test
 
 import (
+	"fmt"
 	"iter"
 	"math/rand/v2"
 	. "slices"
@@ -99,6 +100,27 @@ func TestCollect(t *testing.T) {
 	want := testSeqResult
 	if !Equal(s, want) {
 		t.Errorf("got %v, want %v", s, want)
+	}
+}
+
+func TestCollect2(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		f := func(yield func(int) bool) {
+			for j := range i {
+				if !yield(j) {
+					return
+				}
+			}
+		}
+		s := Collect(f)
+		if len(s) != i {
+			t.Errorf("got %d, want %d", len(s), i)
+		}
+		for j := range i {
+			if s[j] != j {
+				t.Errorf("got %d, want %d", s[j], j)
+			}
+		}
 	}
 }
 
@@ -291,4 +313,18 @@ func TestChunkRange(t *testing.T) {
 
 func chunkEqual[Slice ~[]E, E comparable](s1, s2 []Slice) bool {
 	return EqualFunc(s1, s2, Equal[Slice])
+}
+
+func BenchmarkCollect(b *testing.B) {
+	for _, n := range []int{0, 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000} {
+		var s []int
+		for i := 0; i < n; i++ {
+			s = append(s, rand.IntN(n))
+		}
+		b.Run(fmt.Sprint(n), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				_ = Collect(Values(s))
+			}
+		})
+	}
 }

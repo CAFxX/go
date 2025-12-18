@@ -7,6 +7,7 @@ package slices
 import (
 	"cmp"
 	"iter"
+	"unsafe"
 )
 
 // All returns an iterator over index-value pairs in the slice
@@ -44,14 +45,76 @@ func Values[Slice ~[]E, E any](s Slice) iter.Seq[E] {
 	}
 }
 
+const oldimpl = false
+
 // AppendSeq appends the values from seq to the slice and
 // returns the extended slice.
 // If seq is empty, the result preserves the nilness of s.
 func AppendSeq[Slice ~[]E, E any](s Slice, seq iter.Seq[E]) Slice {
-	for v := range seq {
-		s = append(s, v)
+	if oldimpl {
+		for v := range seq {
+			s = append(s, v)
+		}
+		return s
 	}
-	return s
+
+	var seg []Slice
+	if cap(s) != 0 {
+		seg = append(seg, s)
+	}
+	cnt := len(s)
+
+	singleuse(seq)(func(v E) bool {
+		cnt++
+		if len(seg) == 0 || len(seg[len(seg)-1]) == cap(seg[len(seg)-1]) {
+			seg = append(seg, Grow(Slice(nil), max(4, cnt*2)))
+		}
+		seg[len(seg)-1] = append(seg[len(seg)-1], v)
+		return true
+	})
+
+	// Fast path: empty iter.Seq or single segment.
+	if len(seg) == 0 {
+		return s // preserve nilness
+	} else if len(seg) == 1 {
+		return seg[0] // already has all elements
+	}
+
+	// Fast path: if the last segment has enough capacity to hold all
+	// elements, we reuse it and avoid an additional allocation.
+	if last := seg[len(seg)-1]; cap(last) >= cnt {
+		l := len(last)
+		last = last[:cnt]
+		copy(last[cnt-l:], last[:l])
+		var start int
+		for _, s := range seg[:len(seg)-1] {
+			start += copy(last[start:], s)
+		}
+		return last
+	}
+
+	// General case: allocate a new slice and copy all segments into it.
+	rs := Grow(Slice(nil), cnt)
+	for _, s := range seg {
+		rs = append(rs, s...)
+	}
+	return rs
+}
+
+func noescape[T any](p T) T {
+	x := uintptr(unsafe.Pointer(&p))
+	return *(*T)(unsafe.Pointer(x ^ 0))
+}
+
+func singleuse[E any](seq iter.Seq[E]) iter.Seq[E] {
+	return func(yield func(E) bool) {
+		if seq == nil {
+			return
+		}
+		_seq := seq
+		seq = nil
+		_seq(noescape(yield))
+	}
 }
 
 // Collect collects values from seq into a new slice and returns it.
