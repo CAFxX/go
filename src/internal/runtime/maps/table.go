@@ -1549,3 +1549,27 @@ func (t *table) clone(typ *abi.MapType, seed uintptr, index int) *table {
 	}
 	return nt
 }
+
+// cloneEntriesInto inserts every live entry of t into dst via the normal
+// insert path. Clone uses it to rebuild a drained map at a right-sized
+// directory (see Map.Clone).
+func (t *table) cloneEntriesInto(typ *abi.MapType, dst *Map) {
+	for i := uint64(0); i <= t.groups.lengthMask; i++ {
+		g := t.groups.group(typ, i)
+		for j := uintptr(0); j < abi.MapGroupSlots; j++ {
+			if (g.ctrls().get(j) & ctrlEmpty) == ctrlEmpty {
+				continue
+			}
+			key := g.key(typ, j)
+			if typ.IndirectKey() {
+				key = *((*unsafe.Pointer)(key))
+			}
+			elem := g.elem(typ, j)
+			if typ.IndirectElem() {
+				elem = *((*unsafe.Pointer)(elem))
+			}
+			slotElem := dst.PutSlot(typ, key)
+			typedmemmove(typ.Elem, slotElem, elem)
+		}
+	}
+}

@@ -1199,3 +1199,43 @@ func TestCloneCompact(t *testing.T) {
 		}
 	})
 }
+
+// TestCloneCompactDirectory checks that cloning a map whose directory grew
+// via splits and then drained produces a clone with a smaller directory.
+func TestCloneCompactDirectory(t *testing.T) {
+	// Keep the source's split structure while draining: the sync shrink
+	// would otherwise resize tables (never the directory) as we delete.
+	maps.SetShrinkEnabledForTest(false)
+	defer maps.SetShrinkEnabledForTest(true)
+
+	m, typ := maps.NewTestMap[int, int](0)
+	const n = 4 * maps.MaxTableCapacity
+	fillMap(m, typ, n)
+	srcDir := m.TableCount()
+	if srcDir < 2 {
+		t.Fatalf("source did not split the directory: TableCount=%d", srcDir)
+	}
+
+	// Drain to a handful of entries.
+	const keep = 4
+	for i := 0; i < n-keep; i++ {
+		key := i
+		m.Delete(typ, unsafe.Pointer(&key))
+	}
+
+	clone := m.Clone(typ)
+	if clone.TableCount() >= srcDir {
+		t.Fatalf("clone directory not compacted: clone TableCount=%d, source=%d",
+			clone.TableCount(), srcDir)
+	}
+	for i := n - keep; i < n; i++ {
+		key := i
+		if _, ok := clone.Get(typ, unsafe.Pointer(&key)); !ok {
+			t.Fatalf("clone missing key %d", i)
+		}
+	}
+	// Source is unchanged (still the large directory).
+	if m.TableCount() != srcDir {
+		t.Fatalf("source directory changed: got %d want %d", m.TableCount(), srcDir)
+	}
+}

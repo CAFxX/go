@@ -827,25 +827,69 @@ func (m *Map) Clone(typ *abi.MapType) *Map {
 		cloneGroup(typ, newGroup, oldGroup)
 		m.dirPtr = newGroup.data
 	} else {
-		// Clone each (different) table. The dedup on the previous
-		// entry means i is always the first slot of the table's run,
-		// which is what the clone records as its index.
 		oldDir := unsafe.Slice((**table)(m.dirPtr), m.dirLen)
-		newDir := make([]*table, m.dirLen)
-		for i, t := range oldDir {
-			if i > 0 && t == oldDir[i-1] {
-				newDir[i] = newDir[i-1]
-				continue
+		if cloneDirLen(m.used) < uintptr(m.dirLen) {
+			// The directory outgrew what the live entries need: the map
+			// split as it grew and was then drained. Rebuild the clone by
+			// reinserting the live entries into a fresh map, compacting
+			// both the tables and the directory. Reusing the insert path
+			// keeps the result correct by construction. Only the drained
+			// case takes this slower path; a dense map keeps the verbatim
+			// per-table copy below.
+			m.reinitEmpty()
+			var lastTab *table
+			for _, t := range oldDir {
+				if t == lastTab {
+					continue
+				}
+				lastTab = t
+				t.cloneEntriesInto(typ, m)
 			}
-			newDir[i] = t.clone(typ, m.seed, i)
+		} else {
+			// Clone each (different) table, preserving the directory.
+			// The dedup on the previous entry means i is always the
+			// first slot of the table's run, which is what the clone
+			// records as its index.
+			newDir := make([]*table, m.dirLen)
+			for i, t := range oldDir {
+				if i > 0 && t == oldDir[i-1] {
+					newDir[i] = newDir[i-1]
+					continue
+				}
+				newDir[i] = t.clone(typ, m.seed, i)
+			}
+			m.dirPtr = unsafe.Pointer(&newDir[0])
 		}
-		m.dirPtr = unsafe.Pointer(&newDir[0])
 
 		// Every cloned table is rebuilt or copied tombstone-free.
 		m.tombstonePossible = false
 	}
 
 	return m
+}
+
+// cloneDirLen returns the directory length a freshly built map would use
+// to hold used entries, matching NewMap's sizing: a power of two, >= 1.
+func cloneDirLen(used uint64) uintptr {
+	targetCapacity := (used * abi.MapGroupSlots) / maxAvgGroupLoad
+	dirSize := (targetCapacity + maxTableCapacity - 1) / maxTableCapacity
+	if dirSize == 0 {
+		return 1
+	}
+	d, _ := alignUpPow2(dirSize)
+	return uintptr(d)
+}
+
+// reinitEmpty resets m to an empty map, keeping its seed and clearSeq but
+// discarding the directory. Used by Clone to rebuild into a right-sized
+// structure via the normal insert path.
+func (m *Map) reinitEmpty() {
+	// Preserve only the listed fields; everything else (including any
+	// field added to Map later) resets to its zero value.
+	*m = Map{
+		seed:     m.seed,
+		clearSeq: m.clearSeq,
+	}
 }
 
 func mapKeyError(t *abi.MapType, p unsafe.Pointer) error {
