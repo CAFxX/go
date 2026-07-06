@@ -249,15 +249,18 @@ type Map struct {
 	// On 64-bit systems, this is 64 - globalDepth.
 	globalShift uint8
 
-	// writing is a flag that is toggled (XOR 1) while the map is being
-	// written. Normally it is set to 1 when writing, but if there are
-	// multiple concurrent writers, then toggling increases the probability
-	// that both sides will detect the race.
-	writing uint8
-
 	// tombstonePossible is false if we know that no table in this map
 	// contains a tombstone.
 	tombstonePossible bool
+
+	// writeSeq is incremented on entry to and exit from every map write,
+	// so it is odd exactly while a write is in progress. The low bit
+	// serves the role of the old "writing" flag: a concurrent read or
+	// write is detected when it is found odd (or changed) unexpectedly,
+	// and incrementing (rather than toggling) still leaves it odd during
+	// a racing write. The full value is a write version: a background
+	// observer can tell whether a map was written between two samples.
+	writeSeq uint32
 
 	// clearSeq is a sequence counter of calls to Clear. It is used to
 	// detect map clears during iteration.
@@ -432,7 +435,7 @@ func (m *Map) getWithKey(typ *abi.MapType, key unsafe.Pointer) (unsafe.Pointer, 
 		return nil, nil, false
 	}
 
-	if m.writing != 0 {
+	if m.writeSeq&1 != 0 {
 		fatal("concurrent map read and map write")
 	}
 
@@ -451,7 +454,7 @@ func (m *Map) getWithoutKey(typ *abi.MapType, key unsafe.Pointer) (unsafe.Pointe
 		return nil, false
 	}
 
-	if m.writing != 0 {
+	if m.writeSeq&1 != 0 {
 		fatal("concurrent map read and map write")
 	}
 
@@ -507,7 +510,7 @@ func (m *Map) Put(typ *abi.MapType, key, elem unsafe.Pointer) {
 //
 // PutSlot never returns nil.
 func (m *Map) PutSlot(typ *abi.MapType, key unsafe.Pointer) unsafe.Pointer {
-	if m.writing != 0 {
+	if m.writeSeq&1 != 0 {
 		fatal("concurrent map writes")
 	}
 
@@ -515,7 +518,7 @@ func (m *Map) PutSlot(typ *abi.MapType, key unsafe.Pointer) unsafe.Pointer {
 
 	// Set writing after calling Hasher, since Hasher may panic, in which
 	// case we have not actually done a write.
-	m.writing ^= 1 // toggle, see comment on writing
+	m.writeSeq++ // advance the write sequence, see the writeSeq comment
 
 	if m.dirPtr == nil {
 		m.growToSmall(typ)
@@ -533,10 +536,10 @@ func (m *Map) PutSlot(typ *abi.MapType, key unsafe.Pointer) unsafe.Pointer {
 			tab.checkInvariants(typ, m)
 		}
 
-		if m.writing == 0 {
+		if m.writeSeq&1 == 0 {
 			fatal("concurrent map writes")
 		}
-		m.writing ^= 1
+		m.writeSeq++
 
 		return elem
 	}
@@ -548,10 +551,10 @@ func (m *Map) PutSlot(typ *abi.MapType, key unsafe.Pointer) unsafe.Pointer {
 			continue
 		}
 
-		if m.writing == 0 {
+		if m.writeSeq&1 == 0 {
 			fatal("concurrent map writes")
 		}
-		m.writing ^= 1
+		m.writeSeq++
 
 		return elem
 	}
@@ -677,7 +680,7 @@ func (m *Map) Delete(typ *abi.MapType, key unsafe.Pointer) {
 		return
 	}
 
-	if m.writing != 0 {
+	if m.writeSeq&1 != 0 {
 		fatal("concurrent map writes")
 	}
 
@@ -685,7 +688,7 @@ func (m *Map) Delete(typ *abi.MapType, key unsafe.Pointer) {
 
 	// Set writing after calling Hasher, since Hasher may panic, in which
 	// case we have not actually done a write.
-	m.writing ^= 1 // toggle, see comment on writing
+	m.writeSeq++ // advance the write sequence, see the writeSeq comment
 
 	if m.dirLen == 0 {
 		m.deleteSmall(typ, hash, key)
@@ -703,10 +706,10 @@ func (m *Map) Delete(typ *abi.MapType, key unsafe.Pointer) {
 		m.seed = uintptr(rand())
 	}
 
-	if m.writing == 0 {
+	if m.writeSeq&1 == 0 {
 		fatal("concurrent map writes")
 	}
-	m.writing ^= 1
+	m.writeSeq++
 }
 
 func (m *Map) deleteSmall(typ *abi.MapType, hash uintptr, key unsafe.Pointer) {
@@ -762,10 +765,10 @@ func (m *Map) Clear(typ *abi.MapType) {
 		return
 	}
 
-	if m.writing != 0 {
+	if m.writeSeq&1 != 0 {
 		fatal("concurrent map writes")
 	}
-	m.writing ^= 1 // toggle, see comment on writing
+	m.writeSeq++ // advance the write sequence, see the writeSeq comment
 
 	if m.dirLen == 0 {
 		m.clearSmall(typ)
@@ -789,10 +792,10 @@ func (m *Map) Clear(typ *abi.MapType) {
 	// repeatedly trigger hash collisions. See https://go.dev/issue/25237.
 	m.seed = uintptr(rand())
 
-	if m.writing == 0 {
+	if m.writeSeq&1 == 0 {
 		fatal("concurrent map writes")
 	}
-	m.writing ^= 1
+	m.writeSeq++
 }
 
 func (m *Map) clearSmall(typ *abi.MapType) {
@@ -808,7 +811,7 @@ func (m *Map) clearSmall(typ *abi.MapType) {
 
 func (m *Map) Clone(typ *abi.MapType) *Map {
 	// Note: this should never be called with a nil map.
-	if m.writing != 0 {
+	if m.writeSeq&1 != 0 {
 		fatal("concurrent map clone and map write")
 	}
 

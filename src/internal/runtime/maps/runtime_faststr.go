@@ -128,7 +128,7 @@ func runtime_mapaccess2_faststr(typ *abi.MapType, m *Map, key string) (unsafe.Po
 		return unsafe.Pointer(&zeroVal[0]), false
 	}
 
-	if m.writing != 0 {
+	if m.writeSeq&1 != 0 {
 		fatal("concurrent map read and map write")
 		return nil, false
 	}
@@ -267,7 +267,7 @@ func runtime_mapassign_faststr(typ *abi.MapType, m *Map, key string) unsafe.Poin
 		pc := abi.FuncPCABIInternal(runtime_mapassign_faststr)
 		race.WritePC(unsafe.Pointer(m), callerpc, pc)
 	}
-	if m.writing != 0 {
+	if m.writeSeq&1 != 0 {
 		fatal("concurrent map writes")
 	}
 
@@ -281,7 +281,7 @@ func runtime_mapassign_faststr(typ *abi.MapType, m *Map, key string) unsafe.Poin
 
 	// Set writing after calling Hasher, since Hasher may panic, in which
 	// case we have not actually done a write.
-	m.writing ^= 1 // toggle, see comment on writing
+	m.writeSeq++ // advance the write sequence, see the writeSeq comment
 
 	if m.dirPtr == nil {
 		m.growToSmall(typ)
@@ -299,10 +299,10 @@ func runtime_mapassign_faststr(typ *abi.MapType, m *Map, key string) unsafe.Poin
 			tab.checkInvariants(typ, m)
 		}
 
-		if m.writing == 0 {
+		if m.writeSeq&1 == 0 {
 			fatal("concurrent map writes")
 		}
-		m.writing ^= 1
+		m.writeSeq++
 
 		return elem
 	}
@@ -397,10 +397,10 @@ outer:
 		}
 	}
 
-	if m.writing == 0 {
+	if m.writeSeq&1 == 0 {
 		fatal("concurrent map writes")
 	}
-	m.writing ^= 1
+	m.writeSeq++
 
 	return slotElem
 }

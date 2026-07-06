@@ -111,7 +111,7 @@ func runtime_mapaccess2(typ *abi.MapType, m *Map, key unsafe.Pointer) (unsafe.Po
 		return unsafe.Pointer(&zeroVal[0]), false
 	}
 
-	if m.writing != 0 {
+	if m.writeSeq&1 != 0 {
 		fatal("concurrent map read and map write")
 	}
 
@@ -186,7 +186,7 @@ func runtime_mapassign(typ *abi.MapType, m *Map, key unsafe.Pointer) unsafe.Poin
 	if asan.Enabled {
 		asan.Read(key, typ.Key.Size_)
 	}
-	if m.writing != 0 {
+	if m.writeSeq&1 != 0 {
 		fatal("concurrent map writes")
 	}
 
@@ -194,7 +194,7 @@ func runtime_mapassign(typ *abi.MapType, m *Map, key unsafe.Pointer) unsafe.Poin
 
 	// Set writing after calling Hasher, since Hasher may panic, in which
 	// case we have not actually done a write.
-	m.writing ^= 1 // toggle, see comment on writing
+	m.writeSeq++ // advance the write sequence, see the writeSeq comment
 
 	if m.dirPtr == nil {
 		m.growToSmall(typ)
@@ -212,10 +212,10 @@ func runtime_mapassign(typ *abi.MapType, m *Map, key unsafe.Pointer) unsafe.Poin
 			tab.checkInvariants(typ, m)
 		}
 
-		if m.writing == 0 {
+		if m.writeSeq&1 == 0 {
 			fatal("concurrent map writes")
 		}
-		m.writing ^= 1
+		m.writeSeq++
 
 		return elem
 	}
@@ -341,10 +341,10 @@ outer:
 		}
 	}
 
-	if m.writing == 0 {
+	if m.writeSeq&1 == 0 {
 		fatal("concurrent map writes")
 	}
-	m.writing ^= 1
+	m.writeSeq++
 
 	return slotElem
 }

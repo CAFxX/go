@@ -1012,7 +1012,7 @@ func (it *Iter) Next() {
 		return
 	}
 
-	if it.m.writing != 0 {
+	if it.m.writeSeq&1 != 0 {
 		fatal("concurrent map iteration and map write")
 		return
 	}
