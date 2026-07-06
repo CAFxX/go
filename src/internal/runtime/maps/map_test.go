@@ -1107,3 +1107,95 @@ func TestDeleteShrink(t *testing.T) {
 		}
 	})
 }
+
+// TestCloneIndirectNoAlias checks that Clone's rebuild path (taken when the
+// source has tombstones) deep-copies indirect (>128B) keys and elems rather
+// than aliasing the source's per-entry storage. Aliasing would let a write to
+// the clone mutate the source.
+func TestCloneIndirectNoAlias(t *testing.T) {
+	type big [200]byte // >128B => stored indirectly
+	src, typ := maps.NewTestMap[int, big](0)
+	const n = 300
+	for i := range n {
+		key, elem := i, big{byte(i)}
+		src.Put(typ, unsafe.Pointer(&key), unsafe.Pointer(&elem))
+	}
+	for i := range n / 2 {
+		key := i
+		src.Delete(typ, unsafe.Pointer(&key)) // leave tombstones -> rebuild path
+	}
+
+	clone := src.Clone(typ)
+
+	// Overwrite a surviving key's element in the clone only.
+	key := n - 1
+	newElem := big{0xAA}
+	clone.Put(typ, unsafe.Pointer(&key), unsafe.Pointer(&newElem))
+
+	got, ok := src.Get(typ, unsafe.Pointer(&key))
+	if !ok {
+		t.Fatalf("source lost key %d", key)
+	}
+	if (*big)(got)[0] != byte(key) {
+		t.Fatalf("clone write aliased source: source[%d][0] = %#x, want %#x",
+			key, (*big)(got)[0], byte(key))
+	}
+}
+
+// TestCloneCompact checks that Clone compacts: a sparse or presized source
+// yields a smaller, entry-preserving, independent clone, while a dense
+// source is copied faithfully.
+func TestCloneCompact(t *testing.T) {
+	present := func(t *testing.T, m *maps.Map, typ *abi.MapType, lo, hi int) {
+		t.Helper()
+		for i := lo; i < hi; i++ {
+			key := i
+			if _, ok := m.Get(typ, unsafe.Pointer(&key)); !ok {
+				t.Fatalf("missing key %d", i)
+			}
+		}
+	}
+
+	t.Run("sparse source is compacted and unhinted", func(t *testing.T) {
+		// A large size hint gives the source a capacity floor; filling
+		// only a few entries leaves it sparse.
+		src, typ := maps.NewTestMap[int, int](512)
+		fillMap(src, typ, 10)
+		srcCap := src.TotalCapacity()
+
+		clone := src.Clone(typ)
+		if got := clone.TotalCapacity(); got >= srcCap {
+			t.Fatalf("clone not compacted: got %d, source %d", got, srcCap)
+		}
+		present(t, clone, typ, 0, 10)
+		present(t, src, typ, 0, 10) // source unchanged
+		if got := src.TotalCapacity(); got != srcCap {
+			t.Fatalf("source capacity changed: got %d, want %d", got, srcCap)
+		}
+
+		// The clone carries no floor, so it is itself shrinkable: a
+		// second clone of the (already tight) clone does not grow it.
+		if got := clone.Clone(typ).TotalCapacity(); got > clone.TotalCapacity() {
+			t.Fatalf("re-clone grew: got %d, want <= %d", got, clone.TotalCapacity())
+		}
+	})
+
+	t.Run("dense source copied faithfully", func(t *testing.T) {
+		src, typ := maps.NewTestMap[int, int](0) // organic growth, no floor
+		const n = 400
+		fillMap(src, typ, n)
+
+		clone := src.Clone(typ)
+		present(t, clone, typ, 0, n)
+
+		// Independence: deleting from the clone must not affect the source.
+		key := 0
+		clone.Delete(typ, unsafe.Pointer(&key))
+		if _, ok := clone.Get(typ, unsafe.Pointer(&key)); ok {
+			t.Fatal("key 0 not deleted from clone")
+		}
+		if _, ok := src.Get(typ, unsafe.Pointer(&key)); !ok {
+			t.Fatal("deleting from clone affected source")
+		}
+	})
+}

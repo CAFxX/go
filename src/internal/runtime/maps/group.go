@@ -371,3 +371,14 @@ func cloneGroup(typ *abi.MapType, newGroup, oldGroup groupReference) {
 	}
 
 }
+
+// cloneIndirectValue returns a fresh heap copy of the value at src, an indirect
+// key or elem. uncheckedPutSlot stores indirect pointers verbatim (it assumes
+// ownership transfers, as in grow), so a caller reinserting entries that the
+// source still owns (Clone's rebuild, the background shrinker's build) must
+// clone the value first to avoid aliasing the source's storage.
+func cloneIndirectValue(typ *abi.Type, src unsafe.Pointer) unsafe.Pointer {
+	dst := newobject(typ)
+	typedmemmove(typ, dst, src)
+	return dst
+}

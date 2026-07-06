@@ -1493,21 +1493,59 @@ func (s probeSeq) next() probeSeq {
 	return s
 }
 
-func (t *table) clone(typ *abi.MapType) *table {
-	// Shallow copy the table structure.
-	t2 := new(table)
-	*t2 = *t
-	t = t2
+// clone returns an independent copy of t. The copy is compacted: it holds
+// no tombstones and is sized to its live entries, so cloning is a way to
+// reclaim capacity from a sparse or tombstone-heavy map. seed is the
+// cloning map's hash seed (unchanged from the source). index is the
+// copy's position in the destination directory (the first slot of the
+// table's run); it is passed in rather than copied from t.index so that
+// clone never depends on the source table's mutable index field.
+//
+// The copy carries no shrink floor: a clone is an ordinary, unhinted map
+// and is fully subject to automatic shrinking afterwards.
+func (t *table) clone(typ *abi.MapType, seed uintptr, index int) *table {
+	// Capacity that holds the live entries at a load of at most 1/2; a
+	// clone carries no floor.
+	target := rightSizedFor(uint64(t.used), 0)
 
-	// We need to just deep copy the groups.data field.
-	oldGroups := t.groups
-	newGroups := newGroups(typ, oldGroups.lengthMask+1)
-	for i := uint64(0); i <= oldGroups.lengthMask; i++ {
-		oldGroup := oldGroups.group(typ, i)
-		newGroup := newGroups.group(typ, i)
-		cloneGroup(typ, newGroup, oldGroup)
+	if t.tombstones() == 0 && uint64(t.capacity) <= target {
+		// Already tombstone-free and no larger than right-sized: a
+		// verbatim group copy is correct and cheapest. Control words
+		// embed seed-derived hash bits, which stay valid because the
+		// clone keeps the source seed.
+		t2 := new(table)
+		*t2 = *t
+		t2.index = index
+		t2.capMeta = 0 // no floor, no pending shrink state
+		oldGroups := t.groups
+		ng := newGroups(typ, oldGroups.lengthMask+1)
+		for i := uint64(0); i <= oldGroups.lengthMask; i++ {
+			cloneGroup(typ, ng.group(typ, i), oldGroups.group(typ, i))
+		}
+		t2.groups = ng
+		return t2
 	}
-	t.groups = newGroups
 
-	return t
+	// Rebuild right-sized, dropping tombstones and unused capacity.
+	// newTable leaves capMeta zero, so the clone has no floor.
+	nt := newTable(typ, target, index, t.localDepth)
+	for i := uint64(0); i <= t.groups.lengthMask; i++ {
+		g := t.groups.group(typ, i)
+		for j := uintptr(0); j < abi.MapGroupSlots; j++ {
+			if (g.ctrls().get(j) & ctrlEmpty) == ctrlEmpty {
+				continue
+			}
+			key := g.key(typ, j)
+			if typ.IndirectKey() {
+				// Clone, not alias: the source keeps this entry.
+				key = cloneIndirectValue(typ.Key, *((*unsafe.Pointer)(key)))
+			}
+			elem := g.elem(typ, j)
+			if typ.IndirectElem() {
+				elem = cloneIndirectValue(typ.Elem, *((*unsafe.Pointer)(elem)))
+			}
+			nt.uncheckedPutSlot(typ, typ.Hasher(key, seed), key, elem)
+		}
+	}
+	return nt
 }

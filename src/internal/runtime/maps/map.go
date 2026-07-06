@@ -827,7 +827,9 @@ func (m *Map) Clone(typ *abi.MapType) *Map {
 		cloneGroup(typ, newGroup, oldGroup)
 		m.dirPtr = newGroup.data
 	} else {
-		// Clone each (different) table.
+		// Clone each (different) table. The dedup on the previous
+		// entry means i is always the first slot of the table's run,
+		// which is what the clone records as its index.
 		oldDir := unsafe.Slice((**table)(m.dirPtr), m.dirLen)
 		newDir := make([]*table, m.dirLen)
 		for i, t := range oldDir {
@@ -835,9 +837,12 @@ func (m *Map) Clone(typ *abi.MapType) *Map {
 				newDir[i] = newDir[i-1]
 				continue
 			}
-			newDir[i] = t.clone(typ)
+			newDir[i] = t.clone(typ, m.seed, i)
 		}
 		m.dirPtr = unsafe.Pointer(&newDir[0])
+
+		// Every cloned table is rebuilt or copied tombstone-free.
+		m.tombstonePossible = false
 	}
 
 	return m
