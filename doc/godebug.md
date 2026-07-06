@@ -188,6 +188,12 @@ default value `mapshrink=1` enables automatic shrinking. Setting `mapshrink=0`
 restores the previous behavior, in which a map's backing storage never
 shrinks.
 
+Go 1.27 added a new `mapbgshrink` setting that controls whether the runtime
+reclaims the backing storage of maps that are drained or cleared and then left
+idle for several garbage collection cycles. The default value `mapbgshrink=1`
+enables this background reclamation. Setting `mapbgshrink=0` restores the
+previous behavior, in which an idle map's backing storage is never reclaimed.
+
 Go 1.27 added a new `x509sslcertoverrideplatform` setting that controls whether
 crypto/x509 will load roots from disk on Windows and Darwin when `SSL_CERT_FILE`
 or `SSL_CERT_DIR` are set. The default value `x509sslcertoverrideplatform=1` will

@@ -253,6 +253,16 @@ type Map struct {
 	// contains a tombstone.
 	tombstonePossible bool
 
+	// enqueued is set while this map has an entry in the background
+	// shrink queue, to avoid enqueueing it more than once. It is set by
+	// the delete and Clear paths (under the write sequence, so no reader
+	// observes a torn value) and cleared only by the background worker's
+	// stop-the-world commit, so the two never race. On a stack-allocated
+	// map the bit latches (the runtime refuses to queue such maps), which
+	// only disables background shrinking for a map that dies with its
+	// frame anyway. Fills what was padding.
+	enqueued bool
+
 	// writeSeq is incremented on entry to and exit from every map write,
 	// so it is odd exactly while a write is in progress. The low bit
 	// serves the role of the old "writing" flag: a concurrent read or
@@ -260,6 +270,7 @@ type Map struct {
 	// and incrementing (rather than toggling) still leaves it odd during
 	// a racing write. The full value is a write version: a background
 	// observer can tell whether a map was written between two samples.
+	// The automatic idle-map shrinker is built on this.
 	writeSeq uint32
 
 	// clearSeq is a sequence counter of calls to Clear. It is used to
@@ -784,7 +795,14 @@ func (m *Map) Clear(typ *abi.MapType) {
 		}
 		m.used = 0
 		m.tombstonePossible = false
-		// TODO: shrink directory?
+		// The tables keep their capacity, so a map that is cleared and then
+		// left idle would retain it (go.dev/issue/70617). Enqueue it for
+		// background shrinking, as the delete path does; the worker drops
+		// the request if nothing needs shrinking.
+		if bgShrinkEnabled && !m.enqueued {
+			m.enqueued = true
+			enqueueShrink(unsafe.Pointer(m), unsafe.Pointer(typ), m.writeSeq+1)
+		}
 	}
 	m.clearSeq++
 
@@ -819,6 +837,14 @@ func (m *Map) Clone(typ *abi.MapType) *Map {
 	m2 := new(Map)
 	*m2 = *m
 	m = m2
+
+	// The clone is a fresh, private map: it starts its own clear and write
+	// sequences, and must not inherit the source's enqueued bit (it is not
+	// the map any background shrink-queue entry refers to, so nothing would
+	// ever clear the bit).
+	m.clearSeq = 0
+	m.writeSeq = 0
+	m.enqueued = false
 
 	// We need to just deep copy the dirPtr field.
 	if m.dirPtr == nil {
@@ -883,9 +909,9 @@ func cloneDirLen(used uint64) uintptr {
 	return uintptr(d)
 }
 
-// reinitEmpty resets m to an empty map, keeping its seed and clearSeq but
-// discarding the directory. Used by Clone to rebuild into a right-sized
-// structure via the normal insert path.
+// reinitEmpty resets m to an empty map, discarding the directory. The seed
+// is preserved (a map must keep a stable seed); clearSeq is preserved too,
+// though Clone, the sole caller, has already reset it for the fresh copy.
 func (m *Map) reinitEmpty() {
 	// Preserve only the listed fields; everything else (including any
 	// field added to Map later) resets to its zero value.

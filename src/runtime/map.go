@@ -27,6 +27,13 @@ var maps_errNilAssign error = plainError("assignment to entry in nil map")
 //go:linknamestd maps_shrinkEnabled internal/runtime/maps.shrinkEnabled
 var maps_shrinkEnabled bool
 
+// maps_bgShrinkEnabled aliases internal/runtime/maps.bgShrinkEnabled, which
+// gates enqueueing drained maps for background shrinking. Set from
+// GODEBUG=mapbgshrink in parsedebugvars.
+//
+//go:linknamestd maps_bgShrinkEnabled internal/runtime/maps.bgShrinkEnabled
+var maps_bgShrinkEnabled bool
+
 func makemap64(t *abi.MapType, hint int64, m *maps.Map) *maps.Map {
 	if int64(int(hint)) != hint {
 		hint = 0

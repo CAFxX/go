@@ -181,7 +181,7 @@ func MapType() *types.Type {
 	//     globalDepth uint8
 	//     globalShift uint8
 	//     tombstonePossible bool
-	//     // N.B Padding
+	//     enqueued bool
 	//
 	//     writeSeq uint32
 	//
@@ -196,6 +196,7 @@ func MapType() *types.Type {
 		makefield("globalDepth", types.Types[types.TUINT8]),
 		makefield("globalShift", types.Types[types.TUINT8]),
 		makefield("tombstonePossible", types.Types[types.TBOOL]),
+		makefield("enqueued", types.Types[types.TBOOL]),
 		makefield("writeSeq", types.Types[types.TUINT32]),
 		makefield("clearSeq", types.Types[types.TUINT64]),
 	}
@@ -210,7 +211,7 @@ func MapType() *types.Type {
 
 	// The size of Map should be 48 bytes on 64 bit
 	// and 36 bytes on 32 bit platforms.
-	if size := int64(2*8 /* used, clearSeq */ + 3*types.PtrSize /* seed, dirPtr, dirLen */ + 8 /* globalDepth, globalShift, tombstonePossible, pad, writeSeq */); m.Size() != size {
+	if size := int64(2*8 /* used, clearSeq */ + 3*types.PtrSize /* seed, dirPtr, dirLen */ + 8 /* globalDepth, globalShift, tombstonePossible, enqueued, writeSeq */); m.Size() != size {
 		base.Fatalf("internal/runtime/maps.Map size not correct: got %d, want %d", m.Size(), size)
 	}
 

@@ -316,6 +316,7 @@ var debug struct {
 	gctrace                  int32
 	invalidptr               int32
 	madvdontneed             int32 // for Linux; issue 28466
+	mapbgshrink              int32
 	mapshrink                int32
 	scavtrace                int32
 	scheddetail              int32
@@ -376,6 +377,7 @@ var dbgvars = []*dbgVar{
 	{name: "inittrace", value: &debug.inittrace},
 	{name: "invalidptr", value: &debug.invalidptr},
 	{name: "madvdontneed", value: &debug.madvdontneed},
+	{name: "mapbgshrink", value: &debug.mapbgshrink, def: 1},
 	{name: "mapshrink", value: &debug.mapshrink, def: 1},
 	{name: "panicnil", atomic: &debug.panicnil},
 	{name: "profstackdepth", value: &debug.profstackdepth, def: 128},
@@ -430,9 +432,10 @@ func parseRuntimeDebugVars(godebug string) {
 	debug.malloc = (debug.inittrace | debug.sbrk | debug.checkfinalizers) != 0
 	debug.profstackdepth = min(debug.profstackdepth, maxProfStackDepth)
 
-	// Propagate the map-shrink setting to internal/runtime/maps, which
-	// gates its delete-path shrink action on it.
+	// Propagate the map-shrink settings to internal/runtime/maps, which
+	// gates its delete-path shrink action and background enqueue on them.
 	maps_shrinkEnabled = debug.mapshrink != 0
+	maps_bgShrinkEnabled = debug.mapbgshrink != 0
 
 	// Disable async preemption in checkmark mode. The following situation is
 	// problematic with checkmark mode:

@@ -151,6 +151,39 @@ func ResetGCCycleForTest() { gcCycleForTest = nil }
 // SetShrinkEnabledForTest toggles automatic shrinking on the delete path.
 func SetShrinkEnabledForTest(v bool) { shrinkEnabled = v }
 
+// Enqueued reports whether the map is marked as queued for background
+// shrinking.
+func (m *Map) Enqueued() bool { return m.enqueued }
+
+// MarkTablesStaleForTest sets every installed table's index to -1,
+// simulating the state a concurrent background shrink install leaves the
+// source tables in while a Clone is suspended at a stop-the-world. The map
+// must not be used afterwards except as a Clone source.
+func (m *Map) MarkTablesStaleForTest() {
+	for i := range m.dirLen {
+		m.directoryAt(uintptr(i)).index = -1
+	}
+}
+
+// BadTableIndexForTest returns the first directory slot whose installed
+// table does not record the first slot of its run as its index, or -1 if
+// the directory invariant holds. A table with a wrong index corrupts the
+// directory when it is later replaced (grow writes at the recorded index).
+func (m *Map) BadTableIndexForTest() int {
+	var lastTab *table
+	for i := range m.dirLen {
+		t := m.directoryAt(uintptr(i))
+		if t == lastTab {
+			continue
+		}
+		lastTab = t
+		if t.index != i {
+			return i
+		}
+	}
+	return -1
+}
+
 // Returns the start address of the groups array.
 func (t *table) GroupsStart() unsafe.Pointer {
 	return t.groups.data

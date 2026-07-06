@@ -1268,6 +1268,7 @@ const (
 	waitReasonSynctestSelect                          // "select (durable)"
 	waitReasonSynctestWaitGroupWait                   // "sync.WaitGroup.Wait (durable)"
 	waitReasonCleanupWait                             // "cleanup wait"
+	waitReasonGCMapShrinkWait                         // "GC map shrink wait"
 )
 
 var waitReasonStrings = [...]string{
@@ -1318,6 +1319,7 @@ var waitReasonStrings = [...]string{
 	waitReasonSynctestSelect:        "select (durable)",
 	waitReasonSynctestWaitGroupWait: "sync.WaitGroup.Wait (durable)",
 	waitReasonCleanupWait:           "cleanup wait",
+	waitReasonGCMapShrinkWait:       "GC map shrink wait",
 }
 
 func (w waitReason) String() string {

@@ -160,6 +160,12 @@ It is a comma-separated list of name=val pairs setting these named variables:
 	of MADV_FREE. This is less efficient, but causes RSS numbers to drop
 	more quickly.
 
+	mapbgshrink: setting mapbgshrink=0 disables the background shrinking of
+	maps that are drained or cleared and then left idle. By default
+	(mapbgshrink=1) a background worker rebuilds such maps smaller during
+	garbage collection, so that their memory is released even without
+	further map operations.
+
 	mapshrink: setting mapshrink=0 disables automatic shrinking of maps as
 	elements are deleted. By default (mapshrink=1) the runtime rebuilds a
 	map's backing store smaller once it has stayed sparse for several GC

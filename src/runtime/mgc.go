@@ -202,6 +202,7 @@ func gcinit() {
 	lockInit(&work.wbufSpans.lock, lockRankWbufSpans)
 	lockInit(&work.spanSPMCs.lock, lockRankSpanSPMCs)
 	lockInit(&gcCleanups.lock, lockRankCleanupQueue)
+	lockInit(&mapShrinkWork.lock, lockRankLeafRank)
 }
 
 // gcenable is called after the bulk of the runtime initialization,
@@ -209,10 +210,12 @@ func gcinit() {
 // It kicks off the background sweeper goroutine, the background
 // scavenger goroutine, and enables GC.
 func gcenable() {
-	// Kick off sweeping and scavenging.
-	c := make(chan int, 2)
+	// Kick off sweeping, scavenging and background map shrinking.
+	c := make(chan int, 3)
 	go bgsweep(c)
 	go bgscavenge(c)
+	go bgmapshrink(c)
+	<-c
 	<-c
 	<-c
 	memstats.enablegc = true // now that runtime is initialized, GC is okay
@@ -942,6 +945,10 @@ func gcStart(trigger gcTrigger) {
 	semrelease(&worldsema)
 	releasem(mp)
 
+	// Wake the background map shrinker to run concurrently with this mark
+	// phase (see runtime/mgcmapshrink.go).
+	gcMapShrinkWake()
+
 	// Make sure we block instead of returning to user code
 	// in STW mode.
 	if mode != gcBackgroundMode {
@@ -1401,6 +1408,12 @@ func gcMarkTermination(stw worldStop) {
 
 		// marking is complete so we can turn the write barrier off
 		setGCPhase(_GCoff)
+
+		// Commit any background map shrinks that finished building. The
+		// world is stopped and the write barrier is off, so swapping in
+		// the rebuilt tables is safe (see runtime/mgcmapshrink.go).
+		gcMapShrinkCommit()
+
 		stwSwept = gcSweep(work.mode)
 	})
 

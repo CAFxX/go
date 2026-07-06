@@ -653,7 +653,8 @@ func (t *table) Delete(typ *abi.MapType, m *Map, hash uintptr, key unsafe.Pointe
 				// dense-table path using fields the delete already
 				// loaded, keeping the hook off the hot path's cache
 				// lines.
-				if t.used < t.capacity/4 && t.capacity > t.minCapacity() {
+				eligible := t.used < t.capacity/4 && t.capacity > t.minCapacity()
+				if eligible {
 					if t.stamp() == 0 {
 						t.setStamp(gcStamp())
 					} else if shrinkEnabled && stampAge(t.stamp()) >= shrinkAgeCycles {
@@ -662,6 +663,19 @@ func (t *table) Delete(typ *abi.MapType, m *Map, hash uintptr, key unsafe.Pointe
 					}
 				} else if t.stamp() != 0 {
 					t.setStamp(0) // no longer a candidate; reset the clock
+				}
+
+				// Hand the map to the background idle-map shrinker if it
+				// now has reclaimable state (an oversized table, or a new
+				// tombstone) and is not already queued. This covers maps
+				// that drain and then stop receiving deletes, which the
+				// delete-path shrink above cannot reach. writeSeq is odd
+				// here (mid-write) and will be incremented once more when
+				// this Delete returns, so the map's post-delete sequence
+				// is writeSeq+1.
+				if bgShrinkEnabled && !m.enqueued && (tombstone || eligible) {
+					m.enqueued = true
+					enqueueShrink(unsafe.Pointer(m), unsafe.Pointer(typ), m.writeSeq+1)
 				}
 
 				return tombstone
@@ -1499,7 +1513,9 @@ func (s probeSeq) next() probeSeq {
 // cloning map's hash seed (unchanged from the source). index is the
 // copy's position in the destination directory (the first slot of the
 // table's run); it is passed in rather than copied from t.index so that
-// clone never depends on the source table's mutable index field.
+// clone never depends on the source table's mutable index field, which a
+// concurrent background shrink install may set to -1 while Clone is
+// suspended at a stop-the-world.
 //
 // The copy carries no shrink floor: a clone is an ordinary, unhinted map
 // and is fully subject to automatic shrinking afterwards.

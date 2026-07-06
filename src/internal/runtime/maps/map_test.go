@@ -9,7 +9,11 @@ import (
 	"internal/abi"
 	"internal/runtime/maps"
 	"math"
+	"os"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -1142,6 +1146,62 @@ func TestCloneIndirectNoAlias(t *testing.T) {
 	}
 }
 
+// TestCloneStaleSourceIndex checks that Clone does not depend on the source
+// tables' index fields: a background shrink install can mark them stale
+// (index = -1) while a Clone is suspended at a stop-the-world, and the clone
+// must still come out with correct indices (growing or iterating a clone
+// built from stale-marked tables would otherwise corrupt its directory).
+func TestCloneStaleSourceIndex(t *testing.T) {
+	src, typ := maps.NewTestMap[int, int](0)
+	const n = 4 * maps.MaxTableCapacity // several tables, multi-entry directory
+	fillMap(src, typ, n)
+	// Delete a few entries to give some tables tombstones (so they take the
+	// rebuild path) while keeping the map dense enough that Clone keeps the
+	// per-table copy rather than rebuilding the whole directory.
+	const deleted = maps.MaxTableCapacity / 4
+	deleteRange(src, typ, 0, deleted)
+	if src.TableCount() == 0 {
+		t.Fatal("map has no directory")
+	}
+
+	// Simulate the concurrent-install state.
+	src.MarkTablesStaleForTest()
+
+	clone := src.Clone(typ)
+
+	// The clone's directory invariant must hold regardless of the source's
+	// index fields: replacing a table with a bad recorded index would write
+	// outside the directory.
+	if i := clone.BadTableIndexForTest(); i >= 0 {
+		t.Fatalf("clone table at slot %d has a wrong index", i)
+	}
+
+	// Iterate the clone: a table cloned with index -1 would derail the
+	// iterator's directory arithmetic.
+	var it maps.Iter
+	it.Init(typ, clone)
+	got := 0
+	for it.Next(); it.Key() != nil; it.Next() {
+		got++
+	}
+	if want := n - deleted; got != want {
+		t.Fatalf("clone iteration returned %d entries, want %d", got, want)
+	}
+
+	// Grow the clone well past its capacity: replacing a table whose index
+	// is -1 would write outside the directory.
+	for i := n; i < 3*n; i++ {
+		key, elem := i, i
+		clone.Put(typ, unsafe.Pointer(&key), unsafe.Pointer(&elem))
+	}
+	for i := n; i < 3*n; i++ {
+		key := i
+		if _, ok := clone.Get(typ, unsafe.Pointer(&key)); !ok {
+			t.Fatalf("missing key %d after growing the clone", i)
+		}
+	}
+}
+
 // TestCloneCompact checks that Clone compacts: a sparse or presized source
 // yields a smaller, entry-preserving, independent clone, while a dense
 // source is copied faithfully.
@@ -1180,6 +1240,26 @@ func TestCloneCompact(t *testing.T) {
 		}
 	})
 
+	t.Run("clone does not inherit background-shrink state", func(t *testing.T) {
+		src, typ := maps.NewTestMap[int, int](0)
+		const n = 512
+		fillMap(src, typ, n)
+		// Drain below the shrink threshold; the crossing delete marks the
+		// source as enqueued for background shrinking.
+		for i := 0; i < n-8; i++ {
+			key := i
+			src.Delete(typ, unsafe.Pointer(&key))
+		}
+		if !src.Enqueued() {
+			t.Skip("source not enqueued (background shrinking disabled?)")
+		}
+		// The clone is a fresh map no queue entry refers to: it must not
+		// inherit the enqueued bit, or it could never be re-enqueued.
+		if clone := src.Clone(typ); clone.Enqueued() {
+			t.Fatal("clone inherited the enqueued bit from its source")
+		}
+	})
+
 	t.Run("dense source copied faithfully", func(t *testing.T) {
 		src, typ := maps.NewTestMap[int, int](0) // organic growth, no floor
 		const n = 400
@@ -1198,6 +1278,219 @@ func TestCloneCompact(t *testing.T) {
 			t.Fatal("deleting from clone affected source")
 		}
 	})
+}
+
+// skipIfBgShrinkDisabled skips the test when GODEBUG disables background map
+// shrinking. GODEBUG is last-setting-wins, so scan the whole list.
+func skipIfBgShrinkDisabled(t *testing.T) {
+	t.Helper()
+	enabled := true
+	for _, kv := range strings.Split(os.Getenv("GODEBUG"), ",") {
+		switch kv {
+		case "mapbgshrink=0":
+			enabled = false
+		case "mapbgshrink=1":
+			enabled = true
+		}
+	}
+	if !enabled {
+		t.Skip("background map shrinking disabled by GODEBUG")
+	}
+}
+
+// waitForBackgroundShrink drives GC cycles until m's total capacity drops
+// below full, failing the test if it does not happen within a generous
+// deadline. The background pipeline advances at most two phases per cycle
+// (one at the worker, one at mark termination); the sleeps let the
+// concurrent worker get scheduled.
+func waitForBackgroundShrink(t *testing.T, m *maps.Map, full uint64) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for m.TotalCapacity() == full {
+		if time.Now().After(deadline) {
+			t.Fatalf("map did not shrink in the background: capacity still %d", full)
+		}
+		runtime.GC()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if shrunk := m.TotalCapacity(); shrunk >= full {
+		t.Fatalf("capacity did not decrease: got %d, want < %d", shrunk, full)
+	}
+}
+
+// TestBackgroundShrink checks the end-to-end idle-map pipeline: a heap map
+// that is drained and then left idle is rebuilt smaller by the background
+// worker within a few GC cycles, with no further operations on the map.
+func TestBackgroundShrink(t *testing.T) {
+	skipIfBgShrinkDisabled(t)
+
+	// Pin the delete-path shrink clock so the drain below never triggers
+	// synchronous shrinking; the background worker must be what shrinks.
+	maps.SetGCCycleForTest(func() uint32 { return 0 })
+	defer maps.ResetGCCycleForTest()
+
+	m, typ := maps.NewTestMap[int, int](0)
+	const n = 4 * maps.MaxTableCapacity
+	fillMap(m, typ, n)
+	full := m.TotalCapacity()
+	if full == 0 {
+		t.Fatal("map did not grow to tables")
+	}
+
+	// Drain fast, leaving a few entries. The last delete enqueues the map
+	// for background shrinking.
+	for i := 0; i < n-8; i++ {
+		key := i
+		m.Delete(typ, unsafe.Pointer(&key))
+	}
+	if got := m.TotalCapacity(); got != full {
+		t.Fatalf("capacity changed during fast drain: got %d, want %d", got, full)
+	}
+
+	waitForBackgroundShrink(t, m, full)
+
+	// The survivors must still be there, and the map must still work.
+	for i := n - 8; i < n; i++ {
+		key := i
+		if _, ok := m.Get(typ, unsafe.Pointer(&key)); !ok {
+			t.Fatalf("missing key %d after background shrink", i)
+		}
+	}
+	for i := 0; i < 64; i++ {
+		key, elem := i, i
+		m.Put(typ, unsafe.Pointer(&key), unsafe.Pointer(&elem))
+	}
+	for i := 0; i < 64; i++ {
+		key := i
+		if _, ok := m.Get(typ, unsafe.Pointer(&key)); !ok {
+			t.Fatalf("missing key %d after post-shrink inserts", i)
+		}
+	}
+}
+
+// TestBackgroundShrinkAfterClear checks the clear-then-idle path
+// (go.dev/issue/70617): a map that is cleared keeps its tables, and the
+// background worker reclaims them once the map goes idle.
+func TestBackgroundShrinkAfterClear(t *testing.T) {
+	skipIfBgShrinkDisabled(t)
+
+	m, typ := maps.NewTestMap[int, int](0)
+	const n = 4 * maps.MaxTableCapacity
+	fillMap(m, typ, n)
+	full := m.TotalCapacity()
+	if full == 0 {
+		t.Fatal("map did not grow to tables")
+	}
+
+	m.Clear(typ)
+	if !m.Enqueued() {
+		t.Fatal("Clear did not enqueue the map for background shrinking")
+	}
+	// Clear keeps the tables, so the capacity is unchanged until the worker
+	// runs.
+	if got := m.TotalCapacity(); got != full {
+		t.Fatalf("Clear changed capacity: got %d, want %d", got, full)
+	}
+
+	waitForBackgroundShrink(t, m, full)
+
+	// The map must still be empty and usable.
+	for i := 0; i < 64; i++ {
+		key, elem := i, i
+		m.Put(typ, unsafe.Pointer(&key), unsafe.Pointer(&elem))
+	}
+	for i := 0; i < 64; i++ {
+		key := i
+		if _, ok := m.Get(typ, unsafe.Pointer(&key)); !ok {
+			t.Fatalf("missing key %d after clear+shrink+insert", i)
+		}
+	}
+}
+
+// TestBackgroundShrinkStress hammers maps with writes while the background
+// shrink pipeline races against them under GC pressure. String keys make torn
+// reads consequential (a mis-read string header would fault), so this
+// exercises the crash-safety of the concurrent snapshot and the
+// discard-on-write validation. Run with -race in CI for the full effect.
+func TestBackgroundShrinkStress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("stress test")
+	}
+
+	const (
+		nMaps    = 8
+		nKeys    = 2048
+		duration = 2 * time.Second
+	)
+
+	type mt struct {
+		m   *maps.Map
+		typ *abi.MapType
+	}
+	ms := make([]mt, nMaps)
+	keys := make([]string, nKeys)
+	for i := range keys {
+		keys[i] = fmt.Sprintf("key-%d-with-some-length-%d", i, i*i)
+	}
+	for i := range ms {
+		m, typ := maps.NewTestMap[string, int](0)
+		ms[i] = mt{m, typ}
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{}, nMaps+1)
+
+	// Writers: fill and drain their map repeatedly. Every drain enqueues
+	// the map; most snapshots race a subsequent refill and must be
+	// discarded, not crash.
+	for i := range ms {
+		go func(x mt) {
+			defer func() { done <- struct{}{} }()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				for k := range nKeys {
+					elem := k
+					x.m.Put(x.typ, unsafe.Pointer(&keys[k]), unsafe.Pointer(&elem))
+				}
+				for k := range nKeys - 4 {
+					x.m.Delete(x.typ, unsafe.Pointer(&keys[k]))
+				}
+			}
+		}(ms[i])
+	}
+
+	// GC pressure: keep cycles coming so the worker and STW hooks run.
+	go func() {
+		defer func() { done <- struct{}{} }()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			runtime.GC()
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	time.Sleep(duration)
+	close(stop)
+	for range nMaps + 1 {
+		<-done
+	}
+
+	// Every map must still hold exactly its surviving entries.
+	for i, x := range ms {
+		for k := nKeys - 4; k < nKeys; k++ {
+			if _, ok := x.m.Get(x.typ, unsafe.Pointer(&keys[k])); !ok {
+				t.Fatalf("map %d missing surviving key %q", i, keys[k])
+			}
+		}
+	}
 }
 
 // TestCloneCompactDirectory checks that cloning a map whose directory grew
@@ -1237,5 +1530,40 @@ func TestCloneCompactDirectory(t *testing.T) {
 	// Source is unchanged (still the large directory).
 	if m.TableCount() != srcDir {
 		t.Fatalf("source directory changed: got %d want %d", m.TableCount(), srcDir)
+	}
+}
+
+// BenchmarkMapDeleteChurn measures the delete path's steady-state cost,
+// including the shrink-eligibility hook, on a map held near full load so it
+// never actually shrinks (the hook's non-shrinking overhead).
+func BenchmarkMapDeleteChurn(b *testing.B) {
+	m, typ := maps.NewTestMap[int, int](0)
+	const n = 1024
+	fillMap(m, typ, n)
+	b.ReportAllocs()
+	i := 0
+	for b.Loop() {
+		key := i & (n - 1)
+		m.Delete(typ, unsafe.Pointer(&key))
+		elem := key
+		m.Put(typ, unsafe.Pointer(&key), unsafe.Pointer(&elem))
+		i++
+	}
+}
+
+// BenchmarkMapDrainRefill measures a full drain (which shrinks the tables once
+// eligible) followed by a refill (which regrows them): the churn cost the
+// shrink floor and background backoff are meant to bound.
+func BenchmarkMapDrainRefill(b *testing.B) {
+	const n = 1024
+	var cycle uint32
+	maps.SetGCCycleForTest(func() uint32 { return cycle })
+	defer maps.ResetGCCycleForTest()
+	m, typ := maps.NewTestMap[int, int](0)
+	b.ReportAllocs()
+	for b.Loop() {
+		fillMap(m, typ, n)
+		cycle += maps.ShrinkAgeCycles + 1
+		deleteRange(m, typ, 0, n)
 	}
 }
