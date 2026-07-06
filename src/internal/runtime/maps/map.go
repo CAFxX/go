@@ -338,7 +338,11 @@ func NewMap(mt *abi.MapType, hint uintptr, m *Map, maxAlloc uintptr) *Map {
 
 	for i := range directory {
 		// TODO: Think more about initial table capacity.
-		directory[i] = newTable(mt, uint64(targetCapacity)/dirSize, i, m.globalDepth)
+		t := newTable(mt, uint64(targetCapacity)/dirSize, i, m.globalDepth)
+		// Record the presized capacity as a shrink floor so automatic
+		// shrinking never drops a map below its make() size hint.
+		t.setMinCapLog2(uint8(sys.TrailingZeros64(uint64(t.capacity))))
+		directory[i] = t
 	}
 
 	m.dirPtr = unsafe.Pointer(&directory[0])

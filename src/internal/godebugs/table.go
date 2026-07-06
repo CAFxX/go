@@ -48,6 +48,7 @@ var All = []Info{
 	{Name: "httpservecontentkeepheaders", Package: "net/http", Changed: 23, Old: "1"},
 	{Name: "installgoroot", Package: "go/build"},
 	{Name: "jstmpllitinterp", Package: "html/template", Opaque: true}, // bug #66217: remove Opaque
+	{Name: "mapshrink", Package: "runtime", Opaque: true, Changed: 27, Old: "0"},
 	//{Name: "multipartfiles", Package: "mime/multipart"},
 	{Name: "multipartmaxheaders", Package: "mime/multipart"},
 	{Name: "multipartmaxparts", Package: "mime/multipart"},

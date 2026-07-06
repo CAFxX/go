@@ -37,6 +37,36 @@ func newarray(typ *abi.Type, n int) unsafe.Pointer
 //go:linkname newobject
 func newobject(typ *abi.Type) unsafe.Pointer
 
+// gcCycle is the number of completed GC cycles, pushed by the runtime at
+// the end of every cycle (see runtime.gcMarkTermination). It is the clock
+// used to age shrink-eligible tables (see table.shrink). The runtime pushes
+// a variable rather than exposing a call so that the delete path can read
+// the clock with a plain load; the value only changes at mark termination,
+// where every mutator is stopped, so an unsynchronized read is exact.
+//
+//go:linknamestd gcCycle
+var gcCycle uint32
+
+// gcCycleForTest, when non-nil, overrides the shrink clock so tests can
+// drive it deterministically.
+var gcCycleForTest func() uint32
+
+// currentGCCycle reports the GC cycle count used by shrink eligibility.
+func currentGCCycle() uint32 {
+	if f := gcCycleForTest; f != nil {
+		return f()
+	}
+	return gcCycle
+}
+
+// shrinkEnabled gates the automatic shrink action on the delete path. It
+// mirrors GODEBUG=mapshrink and is set by the runtime in parsedebugvars;
+// tests set it directly. Eligibility stamping runs regardless, so that a
+// future background shrinker still learns which tables are idle.
+//
+//go:linknamestd shrinkEnabled
+var shrinkEnabled bool
+
 // Pushed from runtime in order to use runtime.plainError
 //
 //go:linkname errNilAssign

@@ -182,6 +182,12 @@ to `1`. This opt-out is expected to be kept indefinitely in case goroutine
 labels acquire sensitive information that shouldn't be made available in
 tracebacks.
 
+Go 1.27 added a new `mapshrink` setting that controls whether the runtime
+automatically shrinks a map's backing storage as elements are deleted. The
+default value `mapshrink=1` enables automatic shrinking. Setting `mapshrink=0`
+restores the previous behavior, in which a map's backing storage never
+shrinks.
+
 Go 1.27 added a new `x509sslcertoverrideplatform` setting that controls whether
 crypto/x509 will load roots from disk on Windows and Darwin when `SSL_CERT_FILE`
 or `SSL_CERT_DIR` are set. The default value `x509sslcertoverrideplatform=1` will

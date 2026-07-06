@@ -20,6 +20,13 @@ const (
 //go:linkname maps_errNilAssign internal/runtime/maps.errNilAssign
 var maps_errNilAssign error = plainError("assignment to entry in nil map")
 
+// maps_shrinkEnabled aliases internal/runtime/maps.shrinkEnabled, which
+// gates the map delete-path shrink action. It is set from GODEBUG=mapshrink
+// in parsedebugvars.
+//
+//go:linknamestd maps_shrinkEnabled internal/runtime/maps.shrinkEnabled
+var maps_shrinkEnabled bool
+
 func makemap64(t *abi.MapType, hint int64, m *maps.Map) *maps.Map {
 	if int64(int(hint)) != hint {
 		hint = 0

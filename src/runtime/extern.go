@@ -160,6 +160,11 @@ It is a comma-separated list of name=val pairs setting these named variables:
 	of MADV_FREE. This is less efficient, but causes RSS numbers to drop
 	more quickly.
 
+	mapshrink: setting mapshrink=0 disables automatic shrinking of maps as
+	elements are deleted. By default (mapshrink=1) the runtime rebuilds a
+	map's backing store smaller once it has stayed sparse for several GC
+	cycles, so that draining a large map eventually releases its memory.
+
 	memprofilerate: setting memprofilerate=X will update the value of runtime.MemProfileRate.
 	When set to 0 memory profiling is disabled.  Refer to the description of
 	MemProfileRate for the default value.

@@ -120,6 +120,37 @@ func (t *table) GrowthLeft() uint64 {
 	return uint64(t.growthLeft)
 }
 
+const ShrinkAgeCycles = shrinkAgeCycles
+
+// TotalCapacity is the sum of the capacities of all tables (0 for a
+// small, single-group map).
+func (m *Map) TotalCapacity() uint64 {
+	if m.dirLen <= 0 {
+		return 0
+	}
+	var n uint64
+	var lastTab *table
+	for i := range m.dirLen {
+		t := m.directoryAt(uintptr(i))
+		if t == lastTab {
+			continue
+		}
+		lastTab = t
+		n += uint64(t.capacity)
+	}
+	return n
+}
+
+// SetGCCycleForTest overrides the GC-cycle clock used by shrink
+// eligibility. ResetGCCycleForTest restores the production clock.
+// (No closure is returned: this package forbids heap-allocated closures.)
+func SetGCCycleForTest(cycle func() uint32) { gcCycleForTest = cycle }
+
+func ResetGCCycleForTest() { gcCycleForTest = nil }
+
+// SetShrinkEnabledForTest toggles automatic shrinking on the delete path.
+func SetShrinkEnabledForTest(v bool) { shrinkEnabled = v }
+
 // Returns the start address of the groups array.
 func (t *table) GroupsStart() unsafe.Pointer {
 	return t.groups.data

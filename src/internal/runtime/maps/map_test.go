@@ -998,3 +998,112 @@ func TestTombstoneGrow(t *testing.T) {
 		}
 	}
 }
+
+// fillMap inserts keys [0,n) with value==key.
+func fillMap(m *maps.Map, typ *abi.MapType, n int) {
+	for i := range n {
+		key, elem := i, i
+		m.Put(typ, unsafe.Pointer(&key), unsafe.Pointer(&elem))
+	}
+}
+
+func deleteRange(m *maps.Map, typ *abi.MapType, lo, hi int) {
+	for i := lo; i < hi; i++ {
+		key := i
+		m.Delete(typ, unsafe.Pointer(&key))
+	}
+}
+
+// TestDeleteShrink checks that a table which stays sparse for
+// ShrinkAgeCycles GC cycles is rebuilt smaller on a subsequent delete,
+// that the shrink does not happen before it has aged, and that it is
+// gated by shrinkEnabled.
+func TestDeleteShrink(t *testing.T) {
+	const n = 512
+
+	newSparseMap := func() (*maps.Map, *abi.MapType, uint64) {
+		// No size hint, so the tables carry no shrink floor and grow
+		// organically to a single multi-group table.
+		m, typ := maps.NewTestMap[int, int](0)
+		fillMap(m, typ, n)
+		full := m.TotalCapacity()
+		if full == 0 {
+			t.Fatal("map did not grow to a table")
+		}
+		return m, typ, full
+	}
+
+	// Deterministic GC-cycle clock.
+	var cycle uint32
+	maps.SetGCCycleForTest(func() uint32 { return cycle })
+	defer maps.ResetGCCycleForTest()
+
+	t.Run("shrinks after aging", func(t *testing.T) {
+		cycle = 0
+		m, typ, full := newSparseMap()
+
+		// Drain to well under 1/4 load at a fixed cycle. The delete that
+		// crosses the threshold records the stamp; none of these deletes
+		// should shrink, because no GC cycle has elapsed.
+		deleteRange(m, typ, 0, n-8)
+		if got := m.TotalCapacity(); got != full {
+			t.Fatalf("capacity changed before aging: got %d, want %d", got, full)
+		}
+
+		// Age past the threshold; the next qualifying delete shrinks.
+		cycle += maps.ShrinkAgeCycles
+		deleteRange(m, typ, n-8, n-7)
+		if got := m.TotalCapacity(); got >= full {
+			t.Fatalf("capacity did not shrink: got %d, want < %d", got, full)
+		}
+
+		// Surviving entries must still be present.
+		for i := n - 7; i < n; i++ {
+			key := i
+			if _, ok := m.Get(typ, unsafe.Pointer(&key)); !ok {
+				t.Fatalf("missing key %d after shrink", i)
+			}
+		}
+	})
+
+	t.Run("no shrink when disabled", func(t *testing.T) {
+		cycle = 0
+		m, typ, full := newSparseMap()
+		maps.SetShrinkEnabledForTest(false)
+		defer maps.SetShrinkEnabledForTest(true)
+
+		deleteRange(m, typ, 0, n-8)
+		cycle += maps.ShrinkAgeCycles + 1
+		deleteRange(m, typ, n-8, n-1)
+		if got := m.TotalCapacity(); got != full {
+			t.Fatalf("capacity shrank with shrinking disabled: got %d, want %d", got, full)
+		}
+	})
+
+	t.Run("respects the size-hint floor", func(t *testing.T) {
+		// A presized map carries a per-table floor (log2 of its initial
+		// capacity); an unhinted map carries none. Draining both must not
+		// take the hinted one below its floor (R6).
+		cycle = 0
+		hinted, htyp := maps.NewTestMap[int, int](n)
+		fillMap(hinted, htyp, n)
+		floor := hinted.TotalCapacity()
+
+		unhinted, utyp, _ := newSparseMap()
+
+		deleteRange(hinted, htyp, 0, n-4)
+		deleteRange(unhinted, utyp, 0, n-4)
+		cycle += maps.ShrinkAgeCycles
+		deleteRange(hinted, htyp, n-4, n-3)
+		deleteRange(unhinted, utyp, n-4, n-3)
+
+		// The unhinted map shrinks toward its few survivors; the hinted one
+		// is floored and must stay at its presized capacity.
+		if got := hinted.TotalCapacity(); got != floor {
+			t.Fatalf("hinted map shrank below its floor: got %d, want %d", got, floor)
+		}
+		if uc := unhinted.TotalCapacity(); uc >= floor {
+			t.Fatalf("unhinted map did not shrink past the hinted floor: got %d, floor %d", uc, floor)
+		}
+	})
+}

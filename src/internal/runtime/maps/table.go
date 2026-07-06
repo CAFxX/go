@@ -51,6 +51,19 @@ type table struct {
 	// but this table has not yet been split.
 	localDepth uint8
 
+	// capMeta packs two nibbles.
+	//
+	// The low nibble is minCapLog2: log2 of the smallest capacity this
+	// table may be automatically shrunk to. It is set from the make()
+	// size hint (see NewMap) so that a presized table is never shrunk
+	// below the requested capacity. 0 means no floor (equivalent to a
+	// floor of MapGroupSlots). Capacities are powers of two in
+	// [MapGroupSlots, maxTableCapacity], so the floor fits in 4 bits.
+	//
+	// The high nibble is the shrink-eligibility stamp used by delete-path
+	// shrinking (see the shrink methods below); 0 means "not a candidate".
+	capMeta uint8
+
 	// Index of this table in the Map directory. This is the index of the
 	// _first_ location in the directory. The table may occur in multiple
 	// sequential indices.
@@ -137,6 +150,100 @@ func (t *table) maxGrowthLeft() uint16 {
 
 func (t *table) Used() uint64 {
 	return uint64(t.used)
+}
+
+// minCapLog2 returns log2 of the table's shrink floor (0 = no floor).
+func (t *table) minCapLog2() uint8 {
+	return t.capMeta & 0x0f
+}
+
+// setMinCapLog2 records log2 of the table's shrink floor.
+func (t *table) setMinCapLog2(l uint8) {
+	t.capMeta = t.capMeta&0xf0 | l&0x0f
+}
+
+// minCapacity is the smallest capacity this table may be automatically
+// shrunk to: the make() hint floor, but never below a single group.
+func (t *table) minCapacity() uint16 {
+	if c := uint16(1) << t.minCapLog2(); c > abi.MapGroupSlots {
+		return c
+	}
+	return abi.MapGroupSlots
+}
+
+// rightSizedFor is the capacity that holds n entries at a load of at most
+// 1/2, never below floorCap or a single group. It is the one place the
+// automatic-shrink layers (delete path, Clone, background rebuild) derive
+// a target capacity from a live-entry count.
+func rightSizedFor(n, floorCap uint64) uint64 {
+	c, _ := alignUpPow2(2 * n)
+	if c < floorCap {
+		c = floorCap
+	}
+	if c < abi.MapGroupSlots {
+		c = abi.MapGroupSlots
+	}
+	return c
+}
+
+// rightSizedCapacity is the capacity that holds t.used entries at a load
+// of at most 1/2, clamped to the table's shrink floor.
+func (t *table) rightSizedCapacity() uint64 {
+	return rightSizedFor(uint64(t.used), uint64(t.minCapacity()))
+}
+
+// Automatic shrinking. A table whose live count has dropped below a
+// quarter of its capacity is a shrink candidate. Rather than shrink on
+// the delete that crosses the threshold (a map that is actively draining
+// is likely to be refilled), we require the table to stay a candidate
+// for shrinkAgeCycles completed GC cycles: the delete records the
+// current cycle in the table's stamp, and a later delete that finds the
+// stamp old enough rebuilds the table smaller. Using GC cycles as the
+// clock ties the delay to allocation activity.
+//
+// The stamp is kept modulo stampMod (a value 1..stampMod; 0 means "not a
+// candidate") so it fits in a nibble. Modular age arithmetic can only
+// under-report the true age, so a wrap delays a shrink rather than
+// triggering one early.
+const (
+	shrinkAgeCycles = 4
+	stampMod        = 15
+)
+
+func (t *table) stamp() uint8     { return t.capMeta >> 4 }
+func (t *table) setStamp(s uint8) { t.capMeta = t.capMeta&0x0f | s<<4 }
+
+// gcStamp encodes the current GC cycle for storage in a stamp nibble.
+func gcStamp() uint8 {
+	return uint8(currentGCCycle()%stampMod) + 1
+}
+
+// stampAge returns the number of completed GC cycles (modulo stampMod)
+// since the stamp s was recorded.
+func stampAge(s uint8) uint8 {
+	cur := int(currentGCCycle() % stampMod)
+	set := int(s) - 1
+	return uint8((cur - set + stampMod) % stampMod)
+}
+
+// shrink rebuilds the table right-sized for its current entries,
+// releasing unused capacity and dropping any tombstones. It must only be
+// called for a shrink-eligible table (used < capacity/4 and capacity >
+// minCapacity), which guarantees the target capacity is below the
+// current one.
+func (t *table) shrink(typ *abi.MapType, m *Map) {
+	t.grow(typ, m, uint16(t.rightSizedCapacity()))
+}
+
+// childFloorLog2 returns the shrink floor (log2) for a table produced by
+// splitting a table whose floor is parentLog2. A split halves the
+// keyspace, so each child carries half the floored capacity; below one
+// group there is no floor to carry.
+func childFloorLog2(parentLog2 uint8) uint8 {
+	if parentLog2 > abi.MapGroupSlotsBits {
+		return parentLog2 - 1
+	}
+	return 0
 }
 
 // Get performs a lookup of the key that key points to. It returns a pointer to
@@ -535,6 +642,28 @@ func (t *table) Delete(typ *abi.MapType, m *Map, hash uintptr, key unsafe.Pointe
 				}
 
 				t.checkInvariants(typ, m)
+
+				// Automatic shrinking. Once the live count drops below a
+				// quarter of the capacity the table becomes a shrink
+				// candidate; if it has stayed one for shrinkAgeCycles GC
+				// cycles, rebuild it smaller now. See the shrink methods
+				// above. minCapacity keeps a presized table from dropping
+				// below its make() size hint.
+				// The density test goes first: it rejects on the common
+				// dense-table path using fields the delete already
+				// loaded, keeping the hook off the hot path's cache
+				// lines.
+				if t.used < t.capacity/4 && t.capacity > t.minCapacity() {
+					if t.stamp() == 0 {
+						t.setStamp(gcStamp())
+					} else if shrinkEnabled && stampAge(t.stamp()) >= shrinkAgeCycles {
+						t.shrink(typ, m)
+						return false // rebuilt table has no tombstones
+					}
+				} else if t.stamp() != 0 {
+					t.setStamp(0) // no longer a candidate; reset the clock
+				}
+
 				return tombstone
 			}
 			match = match.removeFirst()
@@ -654,6 +783,11 @@ func (t *table) tombstones() uint16 {
 
 // Clear deletes all entries from the table resulting in an empty table.
 func (t *table) Clear(typ *abi.MapType) {
+	// A cleared table restarts its shrink-eligibility clock: the make()
+	// hint (floor) is preserved, but any pending candidacy is dropped so
+	// a clear+refill is not shrunk mid-refill.
+	t.setStamp(0)
+
 	mgl := t.maxGrowthLeft()
 	if t.used == 0 && t.growthLeft == mgl { // no current entries and no tombstones
 		return
@@ -1215,12 +1349,6 @@ func (t *table) rehash(typ *abi.MapType, m *Map) {
 	// iteration. Since iteration simply walks through all slots in order
 	// (with random start offset), reordering the slots would break
 	// iteration.
-	//
-	// As an alternative, we could do a "resize" to new groups allocation
-	// of the same size. This would eliminate the tombstones, but using a
-	// new allocation, so the existing grow support in iteration would
-	// continue to work.
-
 	newCapacity := 2 * t.capacity
 	if newCapacity <= maxTableCapacity {
 		t.grow(typ, m, newCapacity)
@@ -1246,6 +1374,14 @@ func (t *table) split(typ *abi.MapType, m *Map) {
 	// TODO: is this the best capacity?
 	left := newTable(typ, maxTableCapacity, -1, localDepth)
 	right := newTable(typ, maxTableCapacity, -1, localDepth)
+
+	// A split halves the keyspace this table covered, so each child
+	// carries half of the shrink floor (see childFloorLog2). This keeps a
+	// presized map from being shrunk below its make() hint even after the
+	// hint's table has grown and split.
+	childFloor := childFloorLog2(t.minCapLog2())
+	left.setMinCapLog2(childFloor)
+	right.setMinCapLog2(childFloor)
 
 	// Split in half at the localDepth bit from the top.
 	mask := localDepthMask(localDepth)
@@ -1289,6 +1425,9 @@ func (t *table) split(typ *abi.MapType, m *Map) {
 // old table.
 func (t *table) grow(typ *abi.MapType, m *Map, newCapacity uint16) {
 	newTable := newTable(typ, uint64(newCapacity), t.index, t.localDepth)
+	// A grow replaces a table with itself at a new size; carry the shrink
+	// floor across so a presized table keeps its make() hint.
+	newTable.setMinCapLog2(t.minCapLog2())
 
 	if t.capacity > 0 {
 		for i := uint64(0); i <= t.groups.lengthMask; i++ {

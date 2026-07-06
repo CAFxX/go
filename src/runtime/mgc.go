@@ -1471,6 +1471,7 @@ func gcMarkTermination(stw worldStop) {
 	// Bump GC cycle count and wake goroutines waiting on sweep.
 	lock(&work.sweepWaiters.lock)
 	memstats.numgc++
+	maps_gcCycle = memstats.numgc
 	injectglist(&work.sweepWaiters.list)
 	unlock(&work.sweepWaiters.lock)
 
@@ -1680,6 +1681,14 @@ func gcMarkTermination(stw worldStop) {
 		Gosched()
 	}
 }
+
+// maps_gcCycle mirrors memstats.numgc for internal/runtime/maps, which uses
+// it to age shrink-eligible tables. It is pushed at the end of every GC
+// cycle so that the map delete path reads the clock with a plain load
+// rather than a call.
+//
+//go:linknamestd maps_gcCycle internal/runtime/maps.gcCycle
+var maps_gcCycle uint32
 
 // gcBgMarkStartWorkers prepares background mark worker goroutines. These
 // goroutines will not run until the mark phase, but they must be started while
